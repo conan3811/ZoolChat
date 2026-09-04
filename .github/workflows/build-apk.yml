@@ -51,14 +51,7 @@ jobs:
           sed -i 's/compileSdk = 37/compileSdk = 36/' "$APP_BUILD"
           sed -i 's/targetSdk = 37/targetSdk = 36/' "$APP_BUILD"
           sed -i '/kotlinOptions { jvmTarget = "17" }/d' "$APP_BUILD"
-          cat >> "$APP_BUILD" <<'KOTLIN_EOF'
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-    }
-}
-KOTLIN_EOF
+          printf '\nkotlin {\n    compilerOptions {\n        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n    }\n}\n' >> "$APP_BUILD"
           sed -i 's/id("com.android.application") version "9.4.0"/id("com.android.application") version "8.13.2"/' "$ROOT_BUILD"
           sed -i 's/version "2.4.10"/version "2.3.21"/g' "$ROOT_BUILD"
           grep -E 'com.android.application|org.jetbrains.kotlin' "$ROOT_BUILD"
