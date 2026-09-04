@@ -50,19 +50,16 @@ jobs:
           APP_BUILD=work/ZoolChat_v0_24/android/app/build.gradle.kts
           SETTINGS_BUILD=work/ZoolChat_v0_24/android/settings.gradle.kts
 
-          # Keep the project's intended 2026 toolchain: AGP 9.4 / Kotlin 2.4.10 / API 37.
           grep -q 'version "9.4.0"' "$ROOT_BUILD"
           grep -q 'version "2.4.10"' "$ROOT_BUILD"
           grep -q 'compileSdk = 37' "$APP_BUILD"
           grep -q 'targetSdk = 37' "$APP_BUILD"
 
-          # Kotlin 2.4 uses compilerOptions instead of the removed kotlinOptions jvmTarget syntax.
           sed -i '/kotlinOptions { jvmTarget = "17" }/d' "$APP_BUILD"
           if ! grep -q 'JvmTarget.JVM_17' "$APP_BUILD"; then
             printf '\nkotlin {\n    compilerOptions {\n        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n    }\n}\n' >> "$APP_BUILD"
           fi
 
-          # LiveKit Android pulls AudioSwitch from JitPack.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("work/ZoolChat_v0_24/android/settings.gradle.kts")
@@ -91,13 +88,13 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Install Android 17 Cinnamon Bun SDK
+      - name: Install Android 17 API 37 SDK
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --list --channel=3 | grep -E 'platforms;android-(37|CinnamonBun)|build-tools;37' || true
-          sdkmanager --channel=3 "platforms;android-CinnamonBun" "build-tools;37.0.0" "platform-tools"
+          sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
           ls -la "$ANDROID_SDK_ROOT/platforms"
+          test -d "$ANDROID_SDK_ROOT/platforms/android-37.0"
 
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
