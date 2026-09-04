@@ -33,7 +33,8 @@ jobs:
             release/safe/s09_0.b64 release/safe/s09_1.b64 release/safe/s09_2.b64 release/safe/s09_3.b64 release/safe/s09_4.b64 \
             release/parts/part10.b64 \
             release/parts/part11.b64 \
-            release/safe/s12_0.b64 release/safe/s12_1.b64 release/safe/s12_2.b64 release/safe/s12_3.b64 release/safe/s12_4.b64 \
+            release/safe/s12_0.b64 release/safe/s12_1.b64 release/safe/s12_2.b64 release/safe/s12_3.b64 \
+            release/safe/s12_4a.b64 release/safe/s12_4b.b64 release/safe/s12_4c.b64 \
             release/parts/part13.b64 \
             > work/ZoolChat-source.b64
           base64 -d work/ZoolChat-source.b64 > work/ZoolChat-source.zip
