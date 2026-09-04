@@ -42,17 +42,18 @@ jobs:
           unzip -tq work/ZoolChat-source.zip
           unzip -q work/ZoolChat-source.zip -d work
 
-      - name: Prepare Android build compatibility
+      - name: Prepare compatible Android toolchain
         shell: bash
         run: |
           set -euo pipefail
+          ROOT_BUILD=work/ZoolChat_v0_24/android/build.gradle.kts
           APP_BUILD=work/ZoolChat_v0_24/android/app/build.gradle.kts
-          PROPS=work/ZoolChat_v0_24/android/gradle.properties
           sed -i 's/compileSdk = 37/compileSdk = 36/' "$APP_BUILD"
           sed -i 's/targetSdk = 37/targetSdk = 36/' "$APP_BUILD"
-          printf '\nandroid.builtInKotlin=false\nandroid.newDsl=false\n' >> "$PROPS"
+          sed -i 's/id("com.android.application") version "9.4.0"/id("com.android.application") version "8.13.2"/' "$ROOT_BUILD"
+          sed -i 's/version "2.4.10"/version "2.3.21"/g' "$ROOT_BUILD"
+          grep -E 'com.android.application|org.jetbrains.kotlin' "$ROOT_BUILD"
           grep -E 'compileSdk|targetSdk' "$APP_BUILD"
-          tail -n 5 "$PROPS"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -68,10 +69,10 @@ jobs:
       - name: Install Android SDK 36
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Set up Gradle 9.6
+      - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.6.0'
+          gradle-version: '8.13'
 
       - name: Build LAN beta APK
         working-directory: work/ZoolChat_v0_24/android
