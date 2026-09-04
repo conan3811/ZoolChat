@@ -1,0 +1,49 @@
+name: Build ZoolChat APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unpack ZoolChat source
+        run: |
+          mkdir -p work
+          unzip -q release/ZoolChat_v0_24_Presence_Typing_Build_RC_Source.zip -d work
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 37
+        run: yes | sdkmanager "platform-tools" "platforms;android-37" "build-tools;37.0.0"
+
+      - name: Set up Gradle 9.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build LAN beta APK
+        working-directory: work/ZoolChat_v0_24/android
+        run: gradle :app:assembleLanBetaDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-v0.24-lanBetaDebug-apk
+          path: work/ZoolChat_v0_24/android/app/build/outputs/apk/lanBeta/debug/*.apk
+          if-no-files-found: error
