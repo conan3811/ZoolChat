@@ -42,6 +42,18 @@ jobs:
           unzip -tq work/ZoolChat-source.zip
           unzip -q work/ZoolChat-source.zip -d work
 
+      - name: Apply ZoolChat v0.25 UI and language overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d release/patches/v0_25_overlay.b64 > work/v0_25_overlay.tar.gz
+          echo "8d0311415ee80a9b39f2c614eab3b93dd21092044176eed9ce6c7f4dece87ea9  work/v0_25_overlay.tar.gz" | sha256sum -c -
+          tar -xzf work/v0_25_overlay.tar.gz -C work/ZoolChat_v0_24
+          grep -q 'versionCode = 25' work/ZoolChat_v0_24/android/app/build.gradle.kts
+          grep -q 'versionName = "0.25.0"' work/ZoolChat_v0_24/android/app/build.gradle.kts
+          test -f work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/LanguageSelectionScreen.kt
+          test -f work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/AboutScreen.kt
+
       - name: Prepare ZoolChat Android build
         shell: bash
         run: |
@@ -78,7 +90,7 @@ jobs:
               s = s.replace(marker, marker + '        maven("https://jitpack.io")\n', 1)
               settings.write_text(s)
 
-          # Repair missing imports in the v0.24 UI snapshot before compilation.
+          # Repair imports required by the source snapshot and v0.25 overlay.
           screens = Path("work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens")
           import_map = {
               screens / "ChatsScreen.kt": [
@@ -102,7 +114,7 @@ jobs:
           sed -n '1,12p' "$ROOT_BUILD"
           echo '--- app plugins ---'
           sed -n '1,12p' "$APP_BUILD"
-          grep -E 'compileSdk|targetSdk' "$APP_BUILD"
+          grep -E 'compileSdk|targetSdk|versionCode|versionName' "$APP_BUILD"
           grep -n 'jitpack' "$SETTINGS_BUILD"
           grep -n '^import androidx.compose.foundation.background' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/ChatsScreen.kt
           grep -n '^import androidx.compose.foundation.background\|^import kotlinx.coroutines.launch' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt
@@ -137,7 +149,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ZoolChat-v0.24-lanBetaDebug-apk
+          name: ZoolChat-v0.25-contrast-bilingual-lanBetaDebug-apk
           path: work/ZoolChat_v0_24/android/app/build/outputs/apk/lanBeta/debug/*.apk
           if-no-files-found: error
           retention-days: 14
