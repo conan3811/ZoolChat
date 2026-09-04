@@ -1,7 +1,10 @@
 FROM node:22-alpine AS unpack
 WORKDIR /src
-COPY zoolchat-server-v0.27.tar.gz.b64 /tmp/server.b64
-RUN base64 -d /tmp/server.b64 > /tmp/server.tar.gz && tar -xzf /tmp/server.tar.gz -C /src
+COPY parts/ /tmp/parts/
+RUN cat /tmp/parts/part00.b64 /tmp/parts/part01.b64 /tmp/parts/part02.b64 /tmp/parts/part03.b64 /tmp/parts/part04.b64 /tmp/parts/part05.b64 /tmp/parts/part06.b64 > /tmp/server.b64 \
+    && base64 -d /tmp/server.b64 > /tmp/server.tar.gz \
+    && echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  /tmp/server.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/server.tar.gz -C /src
 
 FROM node:22-alpine AS build
 WORKDIR /app
