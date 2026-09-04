@@ -100,7 +100,7 @@ jobs:
           grep -q 'cipher.init(Cipher.ENCRYPT_MODE, key())' "$SECURE"
           ! grep -q 'Cipher.ENCRYPT_MODE, key(), GCMParameterSpec' "$SECURE"
           grep -q 'phoneRegion: String?' "$AUTH"
-          grep -q 'SAR.*callingCode' "$UI"
+          grep -q '"SAR"' "$UI"
           grep -q 'buildDialingCountries' "$UI"
 
       - name: Prepare Android build
