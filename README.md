@@ -9,3 +9,5 @@ Android-first messaging and calling app. This repository contains the current **
 - GitHub Actions artifact: `ZoolChat-v0.24-lanBetaDebug-apk`
 
 The beta is designed for two Android phones using the included free local/private-network server stack.
+
+CI trigger marker: v0.24 build.
