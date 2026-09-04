@@ -1,4 +1,4 @@
-name: Build ZoolChat v0.27 Public APK
+name: Build ZoolChat v0.27.1 Public APK
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [ main, zoolchat-v0.27-cloud-beta ]
     paths:
       - 'cloud/API_BASE_URL.txt'
+      - 'release/v0_27/keystore_iv_fix.b64'
       - '.github/workflows/build-v027-public-apk.yml'
 
 permissions:
@@ -79,7 +80,17 @@ jobs:
           echo "1821b909a6236831aa1569572713854891544753c0d723bd37cae71fac9e7fd0  work/v0_26_overlay.tar.gz" | sha256sum -c -
           tar -xzf work/v0_26_overlay.tar.gz -C work/ZoolChat_v0_24
 
-      - name: Prepare ZoolChat v0.27 public Android build
+      - name: Apply AndroidKeyStore generated-IV fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d release/v0_27/keystore_iv_fix.b64 > work/v0_27_keystore_iv_fix.tar.gz
+          echo "efe9e69a3280c3c4478fcbbfe43552a82a3dfd165ff7971a44c3ee313aab1c4d  work/v0_27_keystore_iv_fix.tar.gz" | sha256sum -c -
+          tar -xzf work/v0_27_keystore_iv_fix.tar.gz -C work/ZoolChat_v0_24
+          grep -q 'c.init(Cipher.ENCRYPT_MODE,getOrCreateVaultKey())' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt
+          grep -q 'c.init(Cipher.ENCRYPT_MODE, key())' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/crypto/LocalStorageCrypto.kt
+
+      - name: Prepare ZoolChat v0.27.1 public Android build
         shell: bash
         run: |
           set -euo pipefail
@@ -87,8 +98,8 @@ jobs:
           APP_BUILD=work/ZoolChat_v0_24/android/app/build.gradle.kts
           SETTINGS_BUILD=work/ZoolChat_v0_24/android/settings.gradle.kts
 
-          sed -i 's/versionCode = 26/versionCode = 27/' "$APP_BUILD"
-          sed -i 's/versionName = "0.26.0"/versionName = "0.27.0"/' "$APP_BUILD"
+          sed -i 's/versionCode = 26/versionCode = 28/' "$APP_BUILD"
+          sed -i 's/versionName = "0.26.0"/versionName = "0.27.1"/' "$APP_BUILD"
 
           # AGP 9 built-in Kotlin compatibility.
           sed -i '/id("org.jetbrains.kotlin.android")/d' "$ROOT_BUILD"
@@ -123,8 +134,8 @@ jobs:
                   path.write_text(text)
           PY
 
-          grep -q 'versionCode = 27' "$APP_BUILD"
-          grep -q 'versionName = "0.27.0"' "$APP_BUILD"
+          grep -q 'versionCode = 28' "$APP_BUILD"
+          grep -q 'versionName = "0.27.1"' "$APP_BUILD"
 
       - name: Enforce HTTPS-only manifest for public build
         shell: bash
@@ -157,7 +168,7 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Build public v0.27 APK
+      - name: Build public v0.27.1 APK
         working-directory: work/ZoolChat_v0_24/android
         run: gradle :app:assemblePublicDebug -PZOOLCHAT_API_BASE_URL='${{ steps.api.outputs.api_url }}' --stacktrace
 
@@ -173,7 +184,7 @@ jobs:
       - name: Upload public APK
         uses: actions/upload-artifact@v4
         with:
-          name: ZoolChat-v0.27-public-cloud-apk
+          name: ZoolChat-v0.27.1-public-cloud-apk
           path: work/ZoolChat_v0_24/android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
           retention-days: 14
