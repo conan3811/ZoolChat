@@ -47,7 +47,8 @@ jobs:
         run: |
           set -euo pipefail
           cat \
-            release/patches/v0_25_0.b64 \
+            release/patches/v0_25_0a.b64 \
+            release/patches/v0_25_0b.b64 \
             release/patches/v0_25_1.b64 \
             release/patches/v0_25_2.b64 \
             release/patches/v0_25_3.b64 \
