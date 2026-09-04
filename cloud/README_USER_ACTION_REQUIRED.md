@@ -1,1 +1,0 @@
-Northflank account access is required to create the actual cloud service and database. After Northflank assigns the HTTPS service URL, place it in `cloud/API_BASE_URL.txt` and build the Android `public` flavor.
