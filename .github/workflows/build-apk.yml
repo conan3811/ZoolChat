@@ -57,10 +57,38 @@ jobs:
           base64 -d work/v0_25_overlay.b64 > work/v0_25_overlay.tar.gz
           echo "f0d35b65c854027ef04986ad9c6cbe53fd69f5984d71010b567913995be6ab6c  work/v0_25_overlay.tar.gz" | sha256sum -c -
           tar -xzf work/v0_25_overlay.tar.gz -C work/ZoolChat_v0_24
-          grep -q 'versionCode = 25' work/ZoolChat_v0_24/android/app/build.gradle.kts
-          grep -q 'versionName = "0.25.0"' work/ZoolChat_v0_24/android/app/build.gradle.kts
-          test -f work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/LanguageSelectionScreen.kt
-          test -f work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/AboutScreen.kt
+
+      - name: Apply ZoolChat v0.26 hidden-server identity overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            release/v0_26/v026_00.b64 \
+            release/v0_26/v026_01.b64 \
+            release/v0_26/v026_02.b64 \
+            release/v0_26/v026_03.b64 \
+            release/v0_26/v026_04.b64 \
+            > work/v0_26_overlay.b64
+          base64 -d work/v0_26_overlay.b64 > work/v0_26_overlay.tar.gz
+          echo "1821b909a6236831aa1569572713854891544753c0d723bd37cae71fac9e7fd0  work/v0_26_overlay.tar.gz" | sha256sum -c -
+          tar -xzf work/v0_26_overlay.tar.gz -C work/ZoolChat_v0_24
+          grep -q 'versionCode = 26' work/ZoolChat_v0_24/android/app/build.gradle.kts
+          grep -q 'versionName = "0.26.0"' work/ZoolChat_v0_24/android/app/build.gradle.kts
+          test -f work/ZoolChat_v0_24/server/migrations/007_email_identity.sql
+          ! grep -q 'عنوان خادم ZoolChat' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/OnboardingAuthScreens.kt
+          grep -q 'البريد الإلكتروني أو اسم المستخدم' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/OnboardingAuthScreens.kt
+          grep -q '@username' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/ContactsDirectoryScreen.kt
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Typecheck ZoolChat server
+        working-directory: work/ZoolChat_v0_24/server
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
 
       - name: Prepare ZoolChat Android build
         shell: bash
@@ -98,7 +126,7 @@ jobs:
               s = s.replace(marker, marker + '        maven("https://jitpack.io")\n', 1)
               settings.write_text(s)
 
-          # Repair imports required by the source snapshot and v0.25 overlay.
+          # Repair imports required by the source snapshot and overlays.
           screens = Path("work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens")
           import_map = {
               screens / "ChatsScreen.kt": [
@@ -124,8 +152,6 @@ jobs:
           sed -n '1,12p' "$APP_BUILD"
           grep -E 'compileSdk|targetSdk|versionCode|versionName' "$APP_BUILD"
           grep -n 'jitpack' "$SETTINGS_BUILD"
-          grep -n '^import androidx.compose.foundation.background' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/ChatsScreen.kt
-          grep -n '^import androidx.compose.foundation.background\|^import kotlinx.coroutines.launch' work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -157,7 +183,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ZoolChat-v0.25-contrast-bilingual-lanBetaDebug-apk
+          name: ZoolChat-v0.26-hidden-server-email-contacts-search-lanBetaDebug-apk
           path: work/ZoolChat_v0_24/android/app/build/outputs/apk/lanBeta/debug/*.apk
           if-no-files-found: error
           retention-days: 14
