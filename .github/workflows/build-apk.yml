@@ -46,8 +46,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d release/patches/v0_25_overlay.b64 > work/v0_25_overlay.tar.gz
-          echo "8d0311415ee80a9b39f2c614eab3b93dd21092044176eed9ce6c7f4dece87ea9  work/v0_25_overlay.tar.gz" | sha256sum -c -
+          cat \
+            release/patches/v0_25_0.b64 \
+            release/patches/v0_25_1.b64 \
+            release/patches/v0_25_2.b64 \
+            release/patches/v0_25_3.b64 \
+            release/patches/v0_25_4.b64 \
+            > work/v0_25_overlay.b64
+          base64 -d work/v0_25_overlay.b64 > work/v0_25_overlay.tar.gz
+          echo "f0d35b65c854027ef04986ad9c6cbe53fd69f5984d71010b567913995be6ab6c  work/v0_25_overlay.tar.gz" | sha256sum -c -
           tar -xzf work/v0_25_overlay.tar.gz -C work/ZoolChat_v0_24
           grep -q 'versionCode = 25' work/ZoolChat_v0_24/android/app/build.gradle.kts
           grep -q 'versionName = "0.25.0"' work/ZoolChat_v0_24/android/app/build.gradle.kts
