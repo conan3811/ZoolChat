@@ -42,19 +42,27 @@ jobs:
           unzip -tq work/ZoolChat-source.zip
           unzip -q work/ZoolChat-source.zip -d work
 
-      - name: Prepare compatible Android toolchain
+      - name: Prepare ZoolChat Android build
         shell: bash
         run: |
           set -euo pipefail
           ROOT_BUILD=work/ZoolChat_v0_24/android/build.gradle.kts
           APP_BUILD=work/ZoolChat_v0_24/android/app/build.gradle.kts
           SETTINGS_BUILD=work/ZoolChat_v0_24/android/settings.gradle.kts
-          sed -i 's/compileSdk = 37/compileSdk = 36/' "$APP_BUILD"
-          sed -i 's/targetSdk = 37/targetSdk = 36/' "$APP_BUILD"
+
+          # Keep the project's intended 2026 toolchain: AGP 9.4 / Kotlin 2.4.10 / SDK 37.
+          grep -q 'version "9.4.0"' "$ROOT_BUILD"
+          grep -q 'version "2.4.10"' "$ROOT_BUILD"
+          grep -q 'compileSdk = 37' "$APP_BUILD"
+          grep -q 'targetSdk = 37' "$APP_BUILD"
+
+          # Kotlin 2.4 uses the compilerOptions DSL instead of the removed kotlinOptions jvmTarget syntax.
           sed -i '/kotlinOptions { jvmTarget = "17" }/d' "$APP_BUILD"
-          printf '\nkotlin {\n    compilerOptions {\n        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n    }\n}\n' >> "$APP_BUILD"
-          sed -i 's/id("com.android.application") version "9.4.0"/id("com.android.application") version "8.13.2"/' "$ROOT_BUILD"
-          sed -i 's/version "2.4.10"/version "2.3.21"/g' "$ROOT_BUILD"
+          if ! grep -q 'JvmTarget.JVM_17' "$APP_BUILD"; then
+            printf '\nkotlin {\n    compilerOptions {\n        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n    }\n}\n' >> "$APP_BUILD"
+          fi
+
+          # LiveKit Android pulls AudioSwitch from JitPack.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("work/ZoolChat_v0_24/android/settings.gradle.kts")
@@ -66,6 +74,7 @@ jobs:
               s = s.replace(marker, marker + '        maven("https://jitpack.io")\n', 1)
               p.write_text(s)
           PY
+
           grep -E 'com.android.application|org.jetbrains.kotlin' "$ROOT_BUILD"
           grep -E 'compileSdk|targetSdk' "$APP_BUILD"
           grep -n 'jitpack' "$SETTINGS_BUILD"
@@ -82,13 +91,13 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Install Android SDK 36
-        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android SDK 37
+        run: sdkmanager "platform-tools" "platforms;android-37" "build-tools;37.0.0"
 
-      - name: Set up Gradle 8.13
+      - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
+          gradle-version: '9.6.0'
 
       - name: Build LAN beta APK
         working-directory: work/ZoolChat_v0_24/android
