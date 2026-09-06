@@ -1,4 +1,4 @@
-name: Validate ZoolChat v0.27 Cloud
+name: Validate ZoolChat Cloud v0.30
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: zoolchat
           POSTGRES_PASSWORD: zoolchat
@@ -37,12 +37,14 @@ jobs:
           cat cloud/parts/part00.b64 cloud/parts/part01.b64 cloud/parts/part02.b64 cloud/parts/part03.b64 cloud/parts/part04.b64 cloud/parts/part05.b64 cloud/parts/part06.b64 > /tmp/server.b64
           base64 -d /tmp/server.b64 > /tmp/server.tar.gz
           echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  /tmp/server.tar.gz" | sha256sum -c -
-          tar -tzf /tmp/server.tar.gz | grep -q 'server/src/index.ts'
+          tar -tzf /tmp/server.tar.gz > /tmp/server-files.txt
+          grep -q 'server/src/index.ts' /tmp/server-files.txt
       - name: Build production container
-        run: docker build -f cloud/Dockerfile cloud -t zoolchat-v027
+        run: docker build -f cloud/Dockerfile cloud -t zoolchat-v030
       - name: Start ZoolChat against PostgreSQL
         shell: bash
         run: |
+          set -euo pipefail
           docker run -d --name zoolchat --network host \
             -e PORT=8080 \
             -e DATABASE_URL=postgresql://zoolchat:zoolchat@127.0.0.1:5432/zoolchat \
@@ -50,13 +52,19 @@ jobs:
             -e FIREBASE_AUTH_ENABLED=false \
             -e DEV_AUTH_ENABLED=false \
             -e TRUST_PROXY=true \
-            zoolchat-v027
+            zoolchat-v030
+          ok=0
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8080/health > /tmp/health.json; then break; fi
+            if curl -fsS http://127.0.0.1:8080/health > /tmp/health.json; then
+              ok=1
+              break
+            fi
             sleep 2
           done
+          test "$ok" = 1
           cat /tmp/health.json
-          grep -q '"version":"0.27.0"' /tmp/health.json
+          grep -q '"version":"0.30.0"' /tmp/health.json
+          grep -q '"db":true' /tmp/health.json
       - name: Smoke test registration and login
         shell: bash
         run: |
