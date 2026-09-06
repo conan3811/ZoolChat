@@ -1,0 +1,85 @@
+name: Validate ZoolChat v0.30 runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: Public ZoolChat backend URL
+        required: true
+        default: https://p01--zoolchat--8q4zpgbqbm94.code.run
+      strict_backend:
+        description: Require backend health to report Firebase + LiveKit ready
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-runtime:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_SERVICES_JSON_B64: ${{ secrets.ZOOLCHAT_GOOGLE_SERVICES_JSON_B64 }}
+      FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.ZOOLCHAT_FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+      BACKEND_URL: ${{ inputs.backend_url }}
+      STRICT_BACKEND: ${{ inputs.strict_backend }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Require Firebase secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GOOGLE_SERVICES_JSON_B64:-}" || { echo 'Missing secret ZOOLCHAT_GOOGLE_SERVICES_JSON_B64'; exit 1; }
+          test -n "${FIREBASE_SERVICE_ACCOUNT_JSON_B64:-}" || { echo 'Missing secret ZOOLCHAT_FIREBASE_SERVICE_ACCOUNT_JSON_B64'; exit 1; }
+
+      - name: Decode Firebase configuration securely
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/zoolchat-runtime"
+          printf '%s' "$GOOGLE_SERVICES_JSON_B64" | base64 --decode > "$RUNNER_TEMP/zoolchat-runtime/google-services.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON_B64" | base64 --decode > "$RUNNER_TEMP/zoolchat-runtime/firebase-service-account.json"
+          chmod 600 "$RUNNER_TEMP/zoolchat-runtime/"*.json
+
+      - name: Validate Firebase client/admin pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/validate_firebase_runtime.py \
+            --google-services "$RUNNER_TEMP/zoolchat-runtime/google-services.json" \
+            --service-account "$RUNNER_TEMP/zoolchat-runtime/firebase-service-account.json" \
+            --package com.zoolchat.app
+
+      - name: Validate public backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${BACKEND_URL%/}/health"
+          echo "Checking $URL"
+          BODY="$(curl --fail --silent --show-error --max-time 20 "$URL")"
+          python - "$BODY" "$STRICT_BACKEND" <<'PY'
+          import json, sys
+          body=json.loads(sys.argv[1])
+          strict=sys.argv[2].lower()=='true'
+          print('health=', json.dumps(body, sort_keys=True))
+          if not body.get('ok') or not body.get('db'):
+              raise SystemExit('Backend health is not OK or database is unavailable')
+          if strict:
+              missing=[k for k in ('livekit','firebase') if not body.get(k)]
+              if missing:
+                  raise SystemExit('Backend runtime not final: missing ' + ', '.join(missing))
+          PY
+
+      - name: Clean temporary credentials
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/zoolchat-runtime"
