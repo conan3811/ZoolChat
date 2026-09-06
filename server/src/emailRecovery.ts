@@ -8,8 +8,22 @@ import { requireAuth } from './auth.js';
 import { hashPassword, verifyPassword } from './freeAuth.js';
 
 const emailSchema=z.string().trim().email().max(254).transform(v=>v.toLowerCase());
-const limiter=rateLimit({windowMs:15*60_000,limit:12,standardHeaders:'draft-8',legacyHeaders:false});
+const limiter=rateLimit({windowMs:15*60_000,limit:Number(process.env.EMAIL_RATE_LIMIT_PER_15_MINUTES??12),standardHeaders:'draft-8',legacyHeaders:false});
 export function emailDeliveryConfigured() { return Boolean(process.env.MAIL_HOST && process.env.MAIL_FROM); }
+function mailTransportOptions(){
+  const port=Number(process.env.MAIL_PORT??587);
+  const secure=process.env.MAIL_SECURE?process.env.MAIL_SECURE==='true':port===465;
+  const requireTLS=process.env.MAIL_REQUIRE_TLS?process.env.MAIL_REQUIRE_TLS==='true':!secure;
+  return {
+    host:process.env.MAIL_HOST,
+    port,
+    secure,
+    requireTLS,
+    auth:process.env.MAIL_USER?{user:process.env.MAIL_USER,pass:process.env.MAIL_PASSWORD}:undefined,
+    connectionTimeout:10_000,
+    socketTimeout:15_000,
+  };
+}
 async function issue(userId:string,email:string,purpose:'verify'|'recover') {
   const code=String(randomInt(0,100_000_000)).padStart(8,'0');
   const codeHash=await hashPassword(code);
@@ -23,7 +37,7 @@ async function issue(userId:string,email:string,purpose:'verify'|'recover') {
   });
   if(!challenge)return;
   try {
-    const transport=nodemailer.createTransport({host:process.env.MAIL_HOST,port:Number(process.env.MAIL_PORT??587),secure:process.env.MAIL_PORT==='465',requireTLS:process.env.MAIL_PORT!=='465',auth:process.env.MAIL_USER?{user:process.env.MAIL_USER,pass:process.env.MAIL_PASSWORD}:undefined,connectionTimeout:10_000,socketTimeout:15_000});
+    const transport=nodemailer.createTransport(mailTransportOptions());
     await transport.sendMail({from:process.env.MAIL_FROM,to:email,subject:purpose==='verify'?'Verify your ZoolChat email':'ZoolChat password recovery',text:`Your one-time ZoolChat code is ${code}. It expires in 15 minutes. If you did not request this, ignore this email.`});
     transport.close();
   } catch {
