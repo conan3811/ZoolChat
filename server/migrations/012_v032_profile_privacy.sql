@@ -7,4 +7,7 @@ ALTER TABLE user_privacy_settings
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS profile_photo_media_id uuid REFERENCES media_assets(id) ON DELETE SET NULL;
 
+ALTER TABLE devices
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
 CREATE INDEX IF NOT EXISTS idx_users_profile_photo_media_id ON users(profile_photo_media_id);
