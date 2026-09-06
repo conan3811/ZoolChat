@@ -1,10 +1,16 @@
 FROM node:22-alpine AS unpack
 WORKDIR /src
 COPY parts/ /tmp/parts/
+COPY v0_30/ /tmp/v0_30/
 RUN cat /tmp/parts/part00.b64 /tmp/parts/part01.b64 /tmp/parts/part02.b64 /tmp/parts/part03.b64 /tmp/parts/part04.b64 /tmp/parts/part05.b64 /tmp/parts/part06.b64 > /tmp/server.b64 \
     && base64 -d /tmp/server.b64 > /tmp/server.tar.gz \
     && echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  /tmp/server.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/server.tar.gz -C /src
+    && tar -xzf /tmp/server.tar.gz -C /src \
+    && cat /tmp/v0_30/cloud_part_00.b64 /tmp/v0_30/cloud_part_01.b64 /tmp/v0_30/cloud_part_02.b64 > /tmp/v030.b64 \
+    && base64 -d /tmp/v030.b64 > /tmp/v030.tar.gz \
+    && echo "db03057803bc3b8721dfd2f40abdeb55a15ab21cf5ebb5fcd941e6b2ee996dec  /tmp/v030.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/v030.tar.gz -C /src/server \
+    && sh /tmp/v0_30/postfix.sh /src/server/src/index.ts
 
 FROM node:22-alpine AS build
 WORKDIR /app
