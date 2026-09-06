@@ -64,16 +64,12 @@ fun ProductionCallScreen(
     val connected by engine.connected.collectAsState()
     val remotePresent by engine.remoteParticipantPresent.collectAsState()
 
-    fun setSpeaker(enabled: Boolean) {
-        @Suppress("DEPRECATION")
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        @Suppress("DEPRECATION")
-        runCatching { audioManager.isSpeakerphoneOn = enabled }
-    }
+    fun setSpeaker(enabled: Boolean) { engine.setSpeakerEnabled(enabled) }
 
     suspend fun connectAfterPermission() {
         if (connectionStarted || ended) return
         connectionStarted = true
+        incomingCallId?.let { context.getSystemService(NotificationManager::class.java).cancel(it.hashCode()) }
         runCatching {
             val o = if (incomingCallId != null) api.acceptCall(incomingCallId) else api.createCall(requireNotNull(peerUserId), video)
             activeCallId = o.optString("callId").takeIf { it.isNotBlank() }
@@ -89,14 +85,16 @@ fun ProductionCallScreen(
                 startMicrophone = mic,
                 startCamera = video && camera,
             )
+            CallForegroundService.start(context, video)
             engine.connect(cfg).getOrThrow()
             e2ee = true
             accepted = true
             state = if (incoming) "متصل" else "جاري الرنين…"
             setSpeaker(speaker)
-            CallForegroundService.start(context, video)
             activeCallId?.let { context.getSystemService(NotificationManager::class.java).cancel(it.hashCode()) }
         }.onFailure {
+            engine.disconnect(); CallForegroundService.stop(context)
+            activeCallId?.let { id -> runCatching { api.endCall(id) } }
             connectionStarted = false
             error = friendlyCallError(it)
             state = "تعذر الاتصال"
@@ -165,7 +163,7 @@ fun ProductionCallScreen(
         onDispose {
             CallForegroundService.stop(context)
             setSpeaker(false)
-            scope.launch {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
                 engine.disconnect()
                 // Do not convert an unanswered incoming invitation into an "ended" call merely
                 // because its screen was closed. The backend timeout/decline path owns that state.
@@ -219,6 +217,7 @@ fun ProductionCallScreen(
             Row(Modifier.fillMaxWidth().padding(vertical = 18.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 CallCtl(if (mic) Icons.Rounded.Mic else Icons.Rounded.MicOff) { mic = !mic; scope.launch { engine.setMicrophoneEnabled(mic) } }
                 if (video) CallCtl(if (camera) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff) { camera = !camera; scope.launch { engine.setCameraEnabled(camera) } }
+                CallCtl(Icons.Rounded.BluetoothAudio) { engine.useAutomaticAudioRoute() }
                 CallCtl(if (speaker) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff) { speaker = !speaker; setSpeaker(speaker) }
                 FilledIconButton(onClick = { scope.launch { ended = true; activeCallId?.let { runCatching { api.endCall(it) } }; engine.disconnect(); CallForegroundService.stop(context); setSpeaker(false); onEnd() } }, modifier = Modifier.size(62.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFE53935))) { Icon(Icons.Rounded.CallEnd, null, tint = Color.White) }
             }
@@ -229,10 +228,10 @@ fun ProductionCallScreen(
 
 private fun friendlyCallError(t: Throwable): String {
     val raw = t.message.orEmpty()
-    if (raw.contains("livekit_not_configured", true)) return "خدمة المكالمات غير مهيأة على الخادم بعد"
+    if (raw.contains("livekit_not_configured", true)) return "خدمة المكالمات غير متاحة حالياً"
     if (raw.contains("call_no_longer_available", true)) return "هذه المكالمة لم تعد متاحة"
     if (t is ApiException && t.status >= 500) return "تعذر الاتصال بخدمة المكالمات. حاول مرة أخرى"
-    return if (raw.isBlank()) "تعذر الاتصال" else raw.take(180)
+    return "تعذر الاتصال. تحقق من صلاحية الميكروفون واتصال الإنترنت وحاول مجدداً."
 }
 
 @Composable

@@ -101,7 +101,11 @@ private fun ProductionNav(
     onOpenChatConsumed:()->Unit,
     onSignedOut:()->Unit,
 ){
+    val permissionLauncher=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { vm.session.notificationsExplained=true }
+    LaunchedEffect(Unit) { if(android.os.Build.VERSION.SDK_INT>=33&&!vm.session.notificationsExplained)permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
     val nav=rememberNavController()
+    var memberId by remember { mutableStateOf<String?>(null) }
+    var memberChatId by remember { mutableStateOf("") }
     val chats by vm.chats.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val searchResults by vm.directorySearch.collectAsState()
@@ -115,7 +119,8 @@ private fun ProductionNav(
     val current by nav.currentBackStackEntryAsState();val route=current?.destination?.route.orEmpty();val showBottom=route in setOf("chats","stories","communities","calls","meet")
     LaunchedEffect(incomingCall){if(incomingCall!=null){nav.navigate("livecall/incoming/${incomingCall.callId}/${incomingCall.video}/${incomingCall.autoAccept}");onIncomingCallConsumed()}}
     LaunchedEffect(realtimeIncoming){if(realtimeIncoming!=null){nav.navigate("livecall/incoming/${realtimeIncoming!!.first}/${realtimeIncoming!!.second}/false");vm.consumeIncomingRealtimeCall()}}
-    LaunchedEffect(openChatId){if(!openChatId.isNullOrBlank()){nav.navigate("prodchat/$openChatId");onOpenChatConsumed()}}
+    LaunchedEffect(openChatId){if(!openChatId.isNullOrBlank()){nav.navigate(if(openChatId=="__meet__") "meet" else "prodchat/$openChatId");onOpenChatConsumed()}}
+    memberId?.let { id -> GroupMemberSheet(vm.api,id,me?.id.orEmpty(),{memberId=null},{memberId=null;vm.openDirect(id){nav.navigate("prodchat/$it")}},{video->memberId=null;nav.navigate("livecall/new/$id/$video")},{memberId=null;if(id==me?.id)nav.navigate("profile") else nav.navigate("contact/$id/$memberChatId")}) }
     Scaffold(Modifier.fillMaxSize(),containerColor=MaterialTheme.colorScheme.background,bottomBar={if(showBottom)ZoolBottomBar(nav)}){inner->
         NavHost(nav,"chats",Modifier.padding(inner)){
             composable("chats"){ProductionChatsScreen(chats,{vm.refreshChats()},{c->nav.navigate("prodchat/${c.id}")},{nav.navigate("contacts")},{nav.navigate("group-create")},{nav.navigate("profile")})}
@@ -157,7 +162,13 @@ private fun ProductionNav(
                     onVideoCall={c?.peerUserId?.let{nav.navigate("livecall/new/$it/true")}},
                     isGroup=c?.type=="group",
                     onOpenGroupInfo={nav.navigate("group-info/$id")},
+                    onOpenProfile={c?.peerUserId?.let { nav.navigate("contact/$it/$id") }},
+                    onMember={memberId=it;memberChatId=id},
                 )
+            }
+            composable("contact/{peer}/{chat}") { entry ->
+                val peer=entry.arguments?.getString("peer").orEmpty();val chat=entry.arguments?.getString("chat").orEmpty()
+                ContactInfoScreen(vm.api,peer,chat,messages[chat].orEmpty(),{nav.popBackStack()},{vm.openDirect(peer){nav.navigate("prodchat/$it")}},{video->nav.navigate("livecall/new/$peer/$video")})
             }
             composable("stories"){StoriesScreen{nav.navigate("profile")}}
             composable("communities"){CommunitiesScreen{nav.navigate("profile")}}

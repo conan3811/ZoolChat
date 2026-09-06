@@ -19,8 +19,9 @@ class ZoolFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val d=message.data
         when(d["type"]){
+            "meeting_invite"->NotificationHelper.showMeetingInvite(this,d["inviteId"].orEmpty(),d["title"]?:"ZoolMeet")
             "call_invite"->NotificationHelper.showIncomingCall(this,d["callId"].orEmpty(),d["callerName"]?:"ZoolChat",d["mode"]=="video")
-            "call_cancelled"->{ val id=d["callId"].orEmpty(); if(id.isNotBlank()) getSystemService(NotificationManager::class.java).cancel(id.hashCode()) }
+            "call_cancelled"->{ val id=d["callId"].orEmpty(); if(id.isNotBlank()) getSystemService(NotificationManager::class.java).cancel(id.hashCode());if(d["reason"]=="missed")NotificationHelper.showMissedCall(this,id) }
             "message_new"->{
                 val chatId=d["chatId"].orEmpty()
                 MessageSyncRepository.scheduleIncomingSync(this,chatId)

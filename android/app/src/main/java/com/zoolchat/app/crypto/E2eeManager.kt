@@ -144,7 +144,7 @@ class E2eeManager(
         }
     }
 
-    suspend fun callKey(callId:String,peerUserId:String):String=b64(sharedKey(peerUserId,"call:$callId"))
+    suspend fun callKey(callId:String,peerUserId:String):String { peerKey(peerUserId,force=true);return b64(sharedKey(peerUserId,"call:$callId")) }
 
     suspend fun encryptMediaFile(chatId:String,peerUserId:String,clientId:String,type:String,input:File,output:File) {
         val key=sharedKey(peerUserId,"media:$chatId")

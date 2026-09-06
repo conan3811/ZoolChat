@@ -18,8 +18,8 @@ android {
         applicationId = "com.zoolchat.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 31
-        versionName = "0.30.0"
+        versionCode = 32
+        versionName = "0.32.0-dev"
 
         buildConfigField("boolean", "DEMO_MODE", "false")
         buildConfigField("String", "API_BASE_URL", "\"${project.findProperty("ZOOLCHAT_API_BASE_URL") ?: "https://YOUR_BACKEND_HOST"}\"")

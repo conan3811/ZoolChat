@@ -361,4 +361,12 @@ Ask ChatGPT to:
 - Additive migration 010 adds email verification and one-time code records. Codes are scrypt-hashed, expire after 15 minutes, allow at most five failed attempts, and have per-account resend cooldown plus IP limits. Reset revokes sessions/devices and closes live sockets. Existing emails are deliberately not auto-verified.
 - SMTP delivery requires MAIL_HOST, MAIL_FROM and the provider's MAIL_PORT/MAIL_USER/MAIL_PASSWORD. No production environment changed and no real email sent. SMTP delivery remains a release blocker until configured and tested.
 - Local cache alias pinned to prevent future username changes from invalidating cache; lifecycle-aware read marking added.
-- Pending CI for this batch: Android build/lint, existing read tests, and new email recovery integration tests.
+- Second batch PASS: Android build/lint, read-state tests, email-recovery integration tests in Actions run 34033027622. SMTP delivery and real-device auth remain untested.
+
+### Third batch in development (pending CI/device validation)
+- LiveKit 2.28.1 AudioSwitchHandler now owns audio focus/communication routing; explicit microphone publication success check; remote audio enabled at subscription; call key refreshed; foreground call service starts before publishing; cleanup survives Compose scope disposal. This is NOT proof of audible two-phone audio.
+- Relation-authorized contact profile endpoint excludes email/phone and respects presence privacy. Contact header opens profile, group message sender opens member sheet; self actions excluded. Basic shared-content filters, common groups, mute durations, block/report added. Photo rendering, full media browsing, additional role actions and complete localization still require further work.
+- ZoolMeet invitations by username/phone/verified email, list and recipient-bound acceptance, waiting without token, host notification and existing admit/deny integration. Denied participants cannot bypass with the join code. No real invite has been sent.
+- Five notification channels; incoming ringing bounded to 60 seconds; missed-call and meeting notifications; stale FCM tokens revoked in batches. Full device lifecycle, duplicate push/realtime alerts, multi-device cleanup and privacy previews remain to verify/complete.
+- New profile/invitation authorization integration tests added. Version label 0.32.0-dev, versionCode 32.
+- All 13 requirements remain tracked. This development branch is not release-ready and has not replaced live 0.31.

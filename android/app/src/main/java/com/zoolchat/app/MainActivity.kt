@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private fun consumeIntent(intent: Intent?) {
         val id = intent?.getStringExtra("incoming_call_id")
         if (!id.isNullOrBlank()) incomingCall = IncomingCallNav(id, intent.getBooleanExtra("incoming_call_video", false), intent.getBooleanExtra("incoming_call_accept", false))
+        if(intent?.getBooleanExtra("open_meet",false)==true)openChatId="__meet__"
         val chat = intent?.getStringExtra("open_chat_id"); if (!chat.isNullOrBlank()) openChatId = chat
     }
 }

@@ -16,6 +16,7 @@ import { pool, tx } from './db.js';
 import { requireAuth } from './auth.js';
 import { createSession, hashPassword, revokeRefreshToken, rotateRefreshToken, verifyPassword, resolveAccessToken } from './freeAuth.js';
 import { deleteFirebaseUser, sendData, verifyFirebaseToken } from './firebase.js';
+import { installMeetingInvitations } from './meetingInvitations.js';
 import { installEmailRecovery } from './emailRecovery.js';
 import { installAdmin } from './admin.js';
 
@@ -83,6 +84,7 @@ installEmailRecovery(app, id => { for(const socket of sockets.get(id) ?? []) soc
 function emitTo(userId: string, event: unknown) {
   for (const socket of sockets.get(userId) ?? []) if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
 }
+installMeetingInvitations(app,emitTo);
 async function fcmTokens(userIds: string[]) {
   if (!userIds.length) return [];
   const r = await pool.query(`SELECT fcm_token FROM devices WHERE user_id=ANY($1::uuid[]) AND revoked_at IS NULL`, [userIds]);
@@ -475,6 +477,18 @@ app.post('/api/chats/:id/read', requireAuth, async (req, res) => {
 });
 
 
+app.get('/api/users/:id/profile', requireAuth, async(req,res)=>{
+  const uid=req.zoolUser!.id,id=z.string().uuid().parse(req.params.id);
+  const shared=await pool.query(`SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$1 AND b.user_id=$2 LIMIT 1`,[uid,id]);
+  const blocked=await pool.query(`SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)`,[uid,id]);
+  if((uid!==id&&!shared.rowCount)||blocked.rowCount)return res.status(404).json({error:'profile_unavailable'});
+  const r=await pool.query(`SELECT u.id,u.display_name,u.username,u.about,u.photo_url,u.online,u.last_seen_at,COALESCE(p.show_online,true) show_online,COALESCE(p.show_last_seen,true) show_last_seen FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE u.id=$1 AND u.account_status='active'`,[id]);
+  if(!r.rowCount)return res.status(404).json({error:'profile_unavailable'});
+  const u=r.rows[0];
+  const groups=await pool.query(`SELECT c.id,c.title FROM chats c JOIN chat_members a ON a.chat_id=c.id AND a.user_id=$1 JOIN chat_members b ON b.chat_id=c.id AND b.user_id=$2 WHERE c.type='group'`,[uid,id]);
+  res.json({profile:{id:u.id,displayName:u.display_name,username:u.username,about:u.about,photoUrl:u.photo_url,online:u.show_online?u.online:null,lastSeenAt:u.show_last_seen?u.last_seen_at:null,groupsInCommon:groups.rows}});
+});
+
 app.get('/api/users/:id/presence', requireAuth, async (req,res)=>{
   const uid=req.zoolUser!.id; const peerId=req.params.id;
   if(peerId!==uid){
@@ -589,7 +603,7 @@ app.post('/api/meetings', requireAuth, async (req,res)=>{
   const roomName=`meet_${randomUUID().replaceAll('-','')}`;const m=(await pool.query(`INSERT INTO meetings(room_name,code,host_id,title,require_approval,scheduled_for) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[roomName,code,uid,b.title,b.requireApproval,b.scheduledFor?new Date(b.scheduledFor):null])).rows[0];await pool.query(`INSERT INTO meeting_participants(meeting_id,user_id,role,status,admitted_at,joined_at) VALUES($1,$2,'host','admitted',now(),now())`,[m.id,uid]);res.status(201).json({meeting:{id:m.id,code:m.code,title:m.title,hostUserId:uid,requireApproval:m.require_approval,status:m.status,scheduledFor:m.scheduled_for?new Date(m.scheduled_for).toISOString():null}});
 });
 app.post('/api/meetings/join', requireAuth, async (req,res)=>{
-  try{const code=z.object({code:z.string().trim().min(5).max(40)}).parse(req.body).code.toLowerCase();const r=await pool.query(`SELECT * FROM meetings WHERE lower(code)=lower($1)`,[code]);if(!r.rowCount)return res.status(404).json({error:'meeting_not_found'});const m=r.rows[0];if(m.status!=='active')return res.status(409).json({error:'meeting_ended'});const uid=req.zoolUser!.id;const immediate=uid===m.host_id||!m.require_approval;const status=immediate?'admitted':'waiting';await pool.query(`INSERT INTO meeting_participants(meeting_id,user_id,role,status,admitted_at,joined_at,left_at) VALUES($1,$2,$3,$4,CASE WHEN $4='admitted' THEN now() ELSE NULL END,CASE WHEN $4='admitted' THEN now() ELSE NULL END,NULL) ON CONFLICT(meeting_id,user_id) DO UPDATE SET status=$4,requested_at=now(),admitted_at=CASE WHEN $4='admitted' THEN now() ELSE NULL END,joined_at=CASE WHEN $4='admitted' THEN now() ELSE NULL END,left_at=NULL`,[m.id,uid,uid===m.host_id?'host':'member',status]);if(!immediate){emitTo(m.host_id,{type:'meeting.join_request',data:{meetingId:m.id,userId:uid,displayName:req.zoolUser!.displayName}});return res.status(202).json({meetingId:m.id,code:m.code,title:m.title,status:'waiting',hostUserId:m.host_id});}const conn=await livekitToken(uid,req.zoolUser!.displayName,m.room_name);res.json({meetingId:m.id,code:m.code,title:m.title,status:'admitted',hostUserId:m.host_id,...conn});}catch(e:any){if(e.message==='livekit_not_configured')return res.status(503).json({error:'livekit_not_configured'});throw e;}
+  try{const code=z.object({code:z.string().trim().min(5).max(40)}).parse(req.body).code.toLowerCase();const r=await pool.query(`SELECT * FROM meetings WHERE lower(code)=lower($1)`,[code]);if(!r.rowCount)return res.status(404).json({error:'meeting_not_found'});const m=r.rows[0];if(m.status!=='active')return res.status(409).json({error:'meeting_ended'});const uid=req.zoolUser!.id;const existing=await pool.query(`SELECT status FROM meeting_participants WHERE meeting_id=$1 AND user_id=$2`,[m.id,uid]);if(existing.rows[0]?.status==='denied')return res.status(403).json({error:'meeting_join_denied'});const immediate=uid===m.host_id||existing.rows[0]?.status==='admitted'||!m.require_approval;const status=immediate?'admitted':'waiting';await pool.query(`INSERT INTO meeting_participants(meeting_id,user_id,role,status,admitted_at,joined_at,left_at) VALUES($1,$2,$3,$4,CASE WHEN $4='admitted' THEN now() ELSE NULL END,CASE WHEN $4='admitted' THEN now() ELSE NULL END,NULL) ON CONFLICT(meeting_id,user_id) DO UPDATE SET status=$4,requested_at=now(),admitted_at=CASE WHEN $4='admitted' THEN now() ELSE NULL END,joined_at=CASE WHEN $4='admitted' THEN now() ELSE NULL END,left_at=NULL`,[m.id,uid,uid===m.host_id?'host':'member',status]);if(!immediate){emitTo(m.host_id,{type:'meeting.join_request',data:{meetingId:m.id,userId:uid,displayName:req.zoolUser!.displayName}});return res.status(202).json({meetingId:m.id,code:m.code,title:m.title,status:'waiting',hostUserId:m.host_id});}const conn=await livekitToken(uid,req.zoolUser!.displayName,m.room_name);res.json({meetingId:m.id,code:m.code,title:m.title,status:'admitted',hostUserId:m.host_id,...conn});}catch(e:any){if(e.message==='livekit_not_configured')return res.status(503).json({error:'livekit_not_configured'});throw e;}
 });
 app.get('/api/meetings/:id/join-status', requireAuth, async (req,res)=>{try{const uid=req.zoolUser!.id;const r=await pool.query(`SELECT m.*,mp.status participant_status FROM meetings m JOIN meeting_participants mp ON mp.meeting_id=m.id AND mp.user_id=$2 WHERE m.id=$1`,[req.params.id,uid]);if(!r.rowCount)return res.status(404).json({error:'meeting_not_found'});const m=r.rows[0];if(m.status==='ended')return res.json({meetingId:m.id,status:'ended'});if(m.participant_status!=='admitted')return res.json({meetingId:m.id,status:m.participant_status});const conn=await livekitToken(uid,req.zoolUser!.displayName,m.room_name);res.json({meetingId:m.id,code:m.code,title:m.title,status:'admitted',hostUserId:m.host_id,...conn});}catch(e:any){if(e.message==='livekit_not_configured')return res.status(503).json({error:'livekit_not_configured'});throw e;}});
 app.get('/api/meetings/:id', requireAuth, async (req,res)=>{const uid=req.zoolUser!.id;const m=await pool.query(`SELECT * FROM meetings WHERE id=$1`,[req.params.id]);if(!m.rowCount)return res.status(404).json({error:'meeting_not_found'});const self=await pool.query(`SELECT 1 FROM meeting_participants WHERE meeting_id=$1 AND user_id=$2`,[req.params.id,uid]);if(!self.rowCount)return res.status(403).json({error:'not_participant'});const ps=await pool.query(`SELECT mp.user_id,u.display_name,u.username,mp.role,mp.status,mp.requested_at,mp.joined_at FROM meeting_participants mp JOIN users u ON u.id=mp.user_id WHERE mp.meeting_id=$1 ORDER BY CASE mp.role WHEN 'host' THEN 0 ELSE 1 END,u.display_name`,[req.params.id]);const x=m.rows[0];res.json({meeting:{id:x.id,code:x.code,title:x.title,hostUserId:x.host_id,requireApproval:x.require_approval,status:x.status,participants:ps.rows.map(p=>({userId:p.user_id,displayName:p.display_name,username:p.username,role:p.role,status:p.status,requestedAt:new Date(p.requested_at).toISOString(),joinedAt:p.joined_at?new Date(p.joined_at).toISOString():null}))}});});

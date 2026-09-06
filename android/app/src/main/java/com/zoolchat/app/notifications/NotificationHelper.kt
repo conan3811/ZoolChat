@@ -17,7 +17,7 @@ object NotificationHelper {
     // Versioned channel IDs migrate installations whose old channel had no sound.
     const val CHAT_CHANNEL="zoolchat_messages_v032"
     const val GROUP_CHANNEL="zoolchat_groups_v032"
-    const val CALL_CHANNEL="zoolchat_calls"
+    const val CALL_CHANNEL="zoolchat_calls_v032"
     const val MISSED_CHANNEL="zoolchat_missed_calls_v032"
     const val MEET_CHANNEL="zoolchat_meet_v032"
     fun ensureChannels(context:Context) {
@@ -29,11 +29,12 @@ object NotificationHelper {
                 setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION).build())
             })
         }
-        nm.createNotificationChannel(NotificationChannel(CALL_CHANNEL,"ZoolChat calls",NotificationManager.IMPORTANCE_HIGH).apply { enableVibration(true); lockscreenVisibility=Notification.VISIBILITY_PRIVATE })
+        nm.createNotificationChannel(NotificationChannel(CALL_CHANNEL,"ZoolChat calls",NotificationManager.IMPORTANCE_HIGH).apply { enableVibration(true); lockscreenVisibility=Notification.VISIBILITY_PRIVATE;setSound(android.provider.Settings.System.DEFAULT_RINGTONE_URI,android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build()) })
     }
     fun clearMessage(context:Context,chatId:String) { context.getSystemService(NotificationManager::class.java).cancel(chatId.hashCode()) }
     fun showMessage(context:Context,title:String,body:String,chatId:String) {
         if(chatId.isBlank() || ConversationVisibility.isOpen(chatId)) { clearMessage(context,chatId); return }
+        if(context.getSharedPreferences("zoolchat_user_settings",0).getLong("mute_until_$chatId",0)>System.currentTimeMillis())return
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         val intent=Intent(context,MainActivity::class.java).putExtra("open_chat_id",chatId)
@@ -44,6 +45,18 @@ object NotificationHelper {
             .setContentTitle(title).setContentText(preview).setAutoCancel(true).setContentIntent(pi)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPriority(NotificationCompat.PRIORITY_HIGH).build()
         context.getSystemService(NotificationManager::class.java).notify(chatId.hashCode(),n)
+    }
+    fun showMeetingInvite(context:Context,id:String,title:String) {
+        ensureChannels(context)
+        if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
+        val intent=Intent(context,MainActivity::class.java).putExtra("open_meet",true)
+        val pi=PendingIntent.getActivity(context,id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MEET_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolMeet").setContentText(title).setContentIntent(pi).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
+    }
+    fun showMissedCall(context:Context,id:String) {
+        ensureChannels(context)
+        if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
+        context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MISSED_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolChat").setContentText("مكالمة فائتة").setAutoCancel(true).build())
     }
     fun showIncomingCall(context:Context,callId:String,caller:String,video:Boolean){
         ensureChannels(context)
@@ -70,10 +83,11 @@ object NotificationHelper {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
+            .setTimeoutAfter(60_000)
             .setContentIntent(screen)
             .setFullScreenIntent(screen,true)
         if(Build.VERSION.SDK_INT>=31)builder.setStyle(NotificationCompat.CallStyle.forIncomingCall(person,decline,answer))
         else builder.addAction(0,"رفض",decline).addAction(0,"رد",answer)
-        context.getSystemService(NotificationManager::class.java).notify(callId.hashCode(),builder.build())
+        context.getSystemService(NotificationManager::class.java).notify(callId.hashCode(),builder.build().apply { flags=flags or Notification.FLAG_INSISTENT })
     }
 }

@@ -65,6 +65,8 @@ fun ProductionChatScreen(
     onVideoCall: () -> Unit,
     isGroup: Boolean = false,
     onOpenGroupInfo: () -> Unit = {},
+    onOpenProfile: () -> Unit = {},
+    onMember: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -146,9 +148,9 @@ fun ProductionChatScreen(
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.fillMaxWidth().height(60.dp).background(MaterialTheme.colorScheme.background).padding(horizontal=4.dp), verticalAlignment=Alignment.CenterVertically) {
             IconButton(onClick=onBack) { Icon(Icons.Rounded.ArrowBack,"رجوع",tint=MaterialTheme.colorScheme.onSurface) }
-            Avatar(title,38.dp)
+            Box(Modifier.clickable { if(isGroup) onOpenGroupInfo() else onOpenProfile() }) { Avatar(title,38.dp) }
             Spacer(Modifier.width(8.dp))
-            Column(modifier=Modifier.weight(1f)) {
+            Column(modifier=Modifier.weight(1f).clickable { if(isGroup) onOpenGroupInfo() else onOpenProfile() }) {
                 Text(title,color=MaterialTheme.colorScheme.onSurface,fontWeight=FontWeight.Bold,maxLines=1)
                 val statusText = when {
                     peerTyping -> t("يكتب الآن…")
@@ -218,6 +220,7 @@ fun ProductionChatScreen(
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=if(mine)Arrangement.Start else Arrangement.End) {
                     Surface(shape=RoundedCornerShape(14.dp),color=if(mine)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=310.dp)) {
                         Column(Modifier.padding(horizontal=10.dp,vertical=7.dp)) {
+                            if(isGroup) TextButton(onClick={onMember(m.senderId)}) { Text(if(mine)t("أنت") else t("عرض العضو")) }
                             if (m.deleted) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Rounded.Block, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha=.75f), modifier = Modifier.size(16.dp))

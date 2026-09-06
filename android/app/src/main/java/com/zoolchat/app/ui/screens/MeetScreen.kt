@@ -47,6 +47,7 @@ fun MeetScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { LiveKitCallEngine(context.applicationContext) }
+    var showInvites by remember { mutableStateOf(false) }
     var stage by remember { mutableStateOf(MeetStage.HOME) }
     var code by remember { mutableStateOf("") }
     var createdCode by remember { mutableStateOf("") }
@@ -78,8 +79,8 @@ fun MeetScreen(
             startMicrophone = mic,
             startCamera = camera,
         )
-        engine.connect(cfg).getOrThrow()
         CallForegroundService.start(context, true)
+        try { engine.connect(cfg).getOrThrow() } catch(e:Exception) { engine.disconnect();CallForegroundService.stop(context);throw e }
         stage = MeetStage.ROOM
     }
 
@@ -169,6 +170,10 @@ fun MeetScreen(
 
     DisposableEffect(Unit) { onDispose { CallForegroundService.stop(context); scope.launch { engine.disconnect() } } }
 
+    if(showInvites) MeetInvitations(api,meetingId?.takeIf { hostUserId==myUserId },createdCode,{showInvites=false},{joinCode->showInvites=false;code=joinCode;stage=MeetStage.PREJOIN})
+    Column(Modifier.fillMaxSize()) {
+    TextButton(onClick={showInvites=true}) { Text(t("دعوات ZoolMeet")) }
+    Box(Modifier.weight(1f)) {
     when (stage) {
         MeetStage.HOME -> MeetHome(
             code = code,
@@ -218,6 +223,8 @@ fun MeetScreen(
         )
     }
 }
+    }
+    }
 
 @Composable private fun MeetHome(code:String,onCodeChange:(String)->Unit,busy:Boolean,error:String?,onSettings:()->Unit,onJoin:()->Unit,onInstant:()->Unit,onCreateLater:()->Unit){
     Column(Modifier.fillMaxSize()){
