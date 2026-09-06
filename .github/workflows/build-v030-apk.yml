@@ -112,13 +112,13 @@ jobs:
           grep -q 'suspend fun declineCall' "$ROOT/network/ApiClient.kt"
           grep -q 'suspend fun joinMeeting' "$ROOT/network/ApiClient.kt"
           grep -q 'autoAcceptIncoming' "$ROOT/ui/screens/ProductionCallScreen.kt"
-          grep -q 'if (!incoming || autoAcceptIncoming)' "$ROOT/ui/screens/ProductionCallScreen.kt"
+          grep -Fq 'if (!incoming || autoAcceptIncoming)' "$ROOT/ui/screens/ProductionCallScreen.kt"
           grep -q 'api.declineCall' "$ROOT/ui/screens/ProductionCallScreen.kt"
           grep -q 'api.joinMeeting' "$ROOT/ui/screens/MeetScreen.kt"
           grep -q 'meetingJoinStatus' "$ROOT/ui/screens/MeetScreen.kt"
-          grep -q 'callHistory' "$ROOT/ui/screens/ProductionCallsScreen.kt"
-          grep -q 'call_event' "$ROOT/ui/screens/ProductionChatScreen.kt" || grep -q 'CallEvent' "$ROOT/ui/screens/ProductionChatScreen.kt" || grep -q 'answeredAt' "$ROOT/ui/screens/ProductionChatScreen.kt"
-          grep -q 'incoming_call_accept",false' "$ROOT/notifications/NotificationHelper.kt"
+          grep -q 'RemoteCallHistoryItem' "$ROOT/ui/screens/ProductionCallsScreen.kt"
+          grep -q 'answeredAt' "$ROOT/ui/screens/ProductionChatScreen.kt"
+          grep -Fq 'incoming_call_accept",false' "$ROOT/notifications/NotificationHelper.kt"
           ! grep -R -n 'محمد.*@mohamed\|@mohamed.*محمد' "$ROOT/ui/screens" || exit 1
 
       - name: Prepare Android build
