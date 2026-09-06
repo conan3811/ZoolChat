@@ -179,9 +179,26 @@ jobs:
               if missing:
                   end = text.find("\n", text.find("package "))
                   path.write_text(text[:end+1] + "\n".join(missing) + "\n" + text[end+1:])
+
+          zool = Path("work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ZoolChatApp.kt")
+          text = zool.read_text()
+          nav_import = "import androidx.navigation.compose.composable"
+          if nav_import not in text:
+              end = text.find("\n", text.find("package "))
+              zool.write_text(text[:end+1] + nav_import + "\n" + text[end+1:])
           PY
           DEBUG_MANIFEST=work/ZoolChat_v0_24/android/app/src/debug/AndroidManifest.xml
           sed -i 's/[[:space:]]android:usesCleartextTraffic="true"//g' "$DEBUG_MANIFEST"
+
+          ROOT=work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app
+          echo '=== ZoolChatApp imports/routes ==='
+          nl -ba "$ROOT/ZoolChatApp.kt" | sed -n '1,55p;120,235p'
+          echo '=== CallEngine ==='
+          nl -ba "$ROOT/calling/CallEngine.kt" | sed -n '1,90p'
+          echo '=== MessageSyncRepository ==='
+          nl -ba "$ROOT/sync/MessageSyncRepository.kt" | sed -n '80,155p'
+          echo '=== MeetScreen relevant section ==='
+          nl -ba "$ROOT/ui/screens/MeetScreen.kt" | sed -n '230,280p'
 
       - uses: actions/setup-java@v5
         with:
