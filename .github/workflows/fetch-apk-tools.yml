@@ -22,10 +22,13 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager 'build-tools;36.0.0'
-          mkdir -p export/build-tools/lib
+          mkdir -p export/build-tools/lib export/build-tools/lib64
           cp "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" export/build-tools/
           cp "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" export/build-tools/
           cp "$ANDROID_SDK_ROOT/build-tools/36.0.0/lib/apksigner.jar" export/build-tools/lib/
+          LIBCPP="$(find "$ANDROID_SDK_ROOT/build-tools/36.0.0" -name 'libc++.so' -type f -print -quit)"
+          test -n "$LIBCPP"
+          cp "$LIBCPP" export/build-tools/lib64/libc++.so
           curl -L --fail --silent --show-error \
             -o export/apktool_3.0.3.jar \
             https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
