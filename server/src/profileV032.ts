@@ -36,6 +36,9 @@ async function canSee(viewer:string,target:string,visibility:Visibility){
 function selfJson(r:any){
  return {id:r.id,displayName:r.display_name,username:r.username??null,email:r.email??null,emailVerified:Boolean(r.email_verified_at),phoneE164:r.phone_e164??null,photoUrl:r.profile_photo_media_id?`/api/media/${r.profile_photo_media_id}`:null,about:r.about??''};
 }
+function privacyJson(x:any){
+ return {readReceipts:Boolean(x.read_receipts),showLastSeen:Boolean(x.show_last_seen),showOnline:Boolean(x.show_online),profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility,messagePreviews:Boolean(x.message_previews)};
+}
 function sharedMessageJson(r:any){
  return {id:r.id,clientId:r.client_id,chatId:r.chat_id,senderId:r.sender_id,type:r.type,body:r.body,createdAt:new Date(r.created_at).toISOString(),editedAt:r.edited_at?new Date(r.edited_at).toISOString():null,deleted:Boolean(r.deleted_at),status:'sent',encrypted:Boolean(r.encrypted),cryptoVersion:Number(r.crypto_version??0),media:r.media_id?{id:r.media_id,url:`/api/media/${r.media_id}`,mime:r.media_mime,name:r.media_name,size:Number(r.media_size??0)}:null};
 }
@@ -79,23 +82,22 @@ export function installProfileV032(app:Express){
  app.get('/api/privacy',requireAuth,async(req,res)=>{
   const r=await pool.query(`INSERT INTO user_privacy_settings(user_id) VALUES($1)
    ON CONFLICT(user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING *`,[req.zoolUser!.id]);
-  const x=r.rows[0];
-  res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online,profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility}});
+  res.json({privacy:privacyJson(r.rows[0])});
  });
 
  app.put('/api/privacy',requireAuth,async(req,res)=>{
-  const b=z.object({readReceipts:z.boolean().optional(),showLastSeen:z.boolean().optional(),showOnline:z.boolean().optional(),profilePhotoVisibility:z.enum(['everyone','contacts','nobody']).optional(),aboutVisibility:z.enum(['everyone','contacts','nobody']).optional()}).parse(req.body);
-  const r=await pool.query(`INSERT INTO user_privacy_settings(user_id,read_receipts,show_last_seen,show_online,profile_photo_visibility,about_visibility)
-   VALUES($1,COALESCE($2,true),COALESCE($3,true),COALESCE($4,true),COALESCE($5,'contacts'),COALESCE($6,'contacts'))
+  const b=z.object({readReceipts:z.boolean().optional(),showLastSeen:z.boolean().optional(),showOnline:z.boolean().optional(),profilePhotoVisibility:z.enum(['everyone','contacts','nobody']).optional(),aboutVisibility:z.enum(['everyone','contacts','nobody']).optional(),messagePreviews:z.boolean().optional()}).parse(req.body);
+  const r=await pool.query(`INSERT INTO user_privacy_settings(user_id,read_receipts,show_last_seen,show_online,profile_photo_visibility,about_visibility,message_previews)
+   VALUES($1,COALESCE($2,true),COALESCE($3,true),COALESCE($4,true),COALESCE($5,'contacts'),COALESCE($6,'contacts'),COALESCE($7,true))
    ON CONFLICT(user_id) DO UPDATE SET
     read_receipts=COALESCE($2,user_privacy_settings.read_receipts),
     show_last_seen=COALESCE($3,user_privacy_settings.show_last_seen),
     show_online=COALESCE($4,user_privacy_settings.show_online),
     profile_photo_visibility=COALESCE($5,user_privacy_settings.profile_photo_visibility),
-    about_visibility=COALESCE($6,user_privacy_settings.about_visibility),updated_at=now()
-   RETURNING *`,[req.zoolUser!.id,b.readReceipts??null,b.showLastSeen??null,b.showOnline??null,b.profilePhotoVisibility??null,b.aboutVisibility??null]);
-  const x=r.rows[0];
-  res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online,profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility}});
+    about_visibility=COALESCE($6,user_privacy_settings.about_visibility),
+    message_previews=COALESCE($7,user_privacy_settings.message_previews),updated_at=now()
+   RETURNING *`,[req.zoolUser!.id,b.readReceipts??null,b.showLastSeen??null,b.showOnline??null,b.profilePhotoVisibility??null,b.aboutVisibility??null,b.messagePreviews??null]);
+  res.json({privacy:privacyJson(r.rows[0])});
  });
 
  app.get('/api/users/:id/profile',requireAuth,async(req,res)=>{
@@ -125,7 +127,10 @@ export function installProfileV032(app:Express){
   const m=r.rows[0];
   let allowed=m.owner_id===viewer;
   if(!allowed){const share=await pool.query('SELECT 1 FROM messages msg JOIN chat_members cm ON cm.chat_id=msg.chat_id WHERE msg.media_id=$1 AND cm.user_id=$2 LIMIT 1',[id.data,viewer]);allowed=Boolean(share.rowCount);}
-  if(!allowed&&m.profile_owner)allowed=await canSee(viewer,m.profile_owner,m.photo_visibility);
+  if(!allowed&&m.profile_owner){
+   const blocked=await pool.query('SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)',[viewer,m.profile_owner]);
+   if(!blocked.rowCount)allowed=await canSee(viewer,m.profile_owner,m.photo_visibility);
+  }
   if(!allowed)return res.status(404).json({error:'media_not_found'});
   res.type(m.mime_type);res.setHeader('Cache-Control','private, max-age=86400');res.setHeader('Content-Disposition',`inline; filename*=UTF-8''${encodeURIComponent(m.original_name)}`);
   if(r2Enabled){
