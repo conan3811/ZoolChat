@@ -43,7 +43,7 @@ class MessageSyncRepository(
     private suspend fun decode(message: RemoteMessage): RemoteMessage {
         if ((!message.encrypted && !message.body.startsWith("zce1:")) || message.deleted) return message
         val chat = db.chats().byId(message.chatId) ?: return message.copy(body = "🔒 رسالة مشفرة", decryptionFailed = true)
-        val peer = chat.peerUserId ?: return message.copy(body = "🔒 رسالة مشفرة", decryptionFailed = true)
+        val peer = chat.peerUserId ?: return message.copy(body = "🔒 تعذر فك تشفير هذه الرسالة", decryptionFailed = true)
         val clientId = message.clientId ?: return message.copy(body = "🔒 تعذر فك التشفير", decryptionFailed = true)
         return runCatching {
             val plain = crypto.decryptMessage(message.chatId, peer, message.senderId, clientId, message.type, message.body)
@@ -170,11 +170,14 @@ class MessageSyncRepository(
         val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(80).ifBlank { "attachment" }
         val localFile = File(dir, "${clientId}_$safeName.zlp")
         if (uri.scheme == "file") {
-            val source=File(requireNotNull(uri.path))
+            val source = File(requireNotNull(uri.path))
             source.inputStream().use { input -> localCrypto.protectStream(input, localFile) }
-            if (source.absolutePath.startsWith(File(context.filesDir,"voice_notes").absolutePath)) runCatching { source.delete() }
+            if (source.absolutePath.startsWith(File(context.filesDir, "voice_notes").absolutePath)) runCatching { source.delete() }
         } else {
-            context.contentResolver.openInputStream(uri).use { input -> requireNotNull(input) { "cannot_open_media" }; localCrypto.protectStream(input, localFile) }
+            context.contentResolver.openInputStream(uri).use { input ->
+                requireNotNull(input) { "cannot_open_media" }
+                localCrypto.protectStream(input, localFile)
+            }
         }
         db.withTransaction {
             db.messages().upsert(CachedMessageEntity("local:$clientId", clientId, chatId, senderId, type, localCrypto.protect(displayName) ?: "", createdAt, "pending", mediaMime = mime, mediaName = localCrypto.protect(displayName)))
@@ -187,10 +190,16 @@ class MessageSyncRepository(
     suspend fun editMessage(chatId: String, messageId: String, newBody: String): RemoteMessage {
         val local = db.messages().byId(messageId) ?: error("message_not_cached")
         val chat = db.chats().byId(chatId) ?: error("chat_not_cached")
-        val peer = chat.peerUserId ?: error("e2ee_direct_only")
         val clientId = local.clientId ?: error("message_client_id_missing")
-        val envelope = crypto.encryptMessage(chatId, peer, local.senderId, clientId, "text", newBody)
-        val remote = parseMessage(api.editMessage(chatId, messageId, envelope.body, envelope.encrypted, envelope.cryptoVersion))
+        val peer = chat.peerUserId
+        val remote = if (peer != null) {
+            val envelope = crypto.encryptMessage(chatId, peer, local.senderId, clientId, "text", newBody)
+            parseMessage(api.editMessage(chatId, messageId, envelope.body, envelope.encrypted, envelope.cryptoVersion))
+        } else {
+            // E2EE beta currently applies to direct chats. Group edits must use the authenticated
+            // group transport instead of failing because there is no single peer identity.
+            parseMessage(api.editMessage(chatId, messageId, newBody, encrypted = false, cryptoVersion = 0))
+        }
         val decoded = decode(remote)
         db.messages().upsert(decoded.toEntity(localCrypto))
         return decoded
@@ -212,9 +221,15 @@ class MessageSyncRepository(
         scheduleSend(context)
     }
 
-    suspend fun clearUnread(chatId: String) { db.chats().clearUnread(chatId); com.zoolchat.app.notifications.NotificationHelper.clearMessage(context, chatId) }
+    suspend fun clearUnread(chatId: String) {
+        db.chats().clearUnread(chatId)
+        com.zoolchat.app.notifications.NotificationHelper.clearMessage(context, chatId)
+    }
 
-    suspend fun markRead(chatId: String, messageId: String) { clearUnread(chatId); api.markRead(chatId, messageId) }
+    suspend fun markRead(chatId: String, messageId: String) {
+        clearUnread(chatId)
+        api.markRead(chatId, messageId)
+    }
 
     companion object {
         fun scheduleSend(context: Context) {
@@ -234,17 +249,33 @@ class MessageSyncRepository(
             WorkManager.getInstance(context).enqueueUniqueWork("zoolchat-incoming-$chatId", ExistingWorkPolicy.REPLACE, request)
         }
 
-        fun parseChat(o: JSONObject)=RemoteChat(o.getString("id"),o.getString("type"),o.getString("title"),o.optString("peerUserId").takeIf{it.isNotBlank()},o.optString("lastMessage").takeIf{it.isNotBlank()},o.optString("lastMessageAt").takeIf{it.isNotBlank()},o.optInt("unread",0))
-        fun parseMessage(o: JSONObject)=RemoteMessage(
-            id=o.getString("id"), chatId=o.getString("chatId"), senderId=o.getString("senderId"),
-            type=o.optString("type","text"), body=o.optString("body"), createdAt=o.getString("createdAt"),
-            editedAt=o.optString("editedAt").takeIf{it.isNotBlank()}, deleted=o.optBoolean("deleted",false),
-            status=o.optString("status","sent"), clientId=o.optString("clientId").takeIf{it.isNotBlank()},
-            mediaUrl=o.optJSONObject("media")?.optString("url")?.takeIf{it.isNotBlank()},
-            mediaMime=o.optJSONObject("media")?.optString("mime")?.takeIf{it.isNotBlank()},
-            mediaName=o.optJSONObject("media")?.optString("name")?.takeIf{it.isNotBlank()},
-            mediaSize=o.optJSONObject("media")?.optLong("size")?.takeIf{it>0},
-            encrypted=o.optBoolean("encrypted",false) || o.optString("body").startsWith("zce1:"), cryptoVersion=o.optInt("cryptoVersion",if(o.optString("body").startsWith("zce1:")) 1 else 0),
+        fun parseChat(o: JSONObject) = RemoteChat(
+            o.getString("id"),
+            o.getString("type"),
+            o.getString("title"),
+            o.optString("peerUserId").takeIf { it.isNotBlank() },
+            o.optString("lastMessage").takeIf { it.isNotBlank() },
+            o.optString("lastMessageAt").takeIf { it.isNotBlank() },
+            o.optInt("unread", 0),
+        )
+
+        fun parseMessage(o: JSONObject) = RemoteMessage(
+            id = o.getString("id"),
+            chatId = o.getString("chatId"),
+            senderId = o.getString("senderId"),
+            type = o.optString("type", "text"),
+            body = o.optString("body"),
+            createdAt = o.getString("createdAt"),
+            editedAt = o.optString("editedAt").takeIf { it.isNotBlank() },
+            deleted = o.optBoolean("deleted", false),
+            status = o.optString("status", "sent"),
+            clientId = o.optString("clientId").takeIf { it.isNotBlank() },
+            mediaUrl = o.optJSONObject("media")?.optString("url")?.takeIf { it.isNotBlank() },
+            mediaMime = o.optJSONObject("media")?.optString("mime")?.takeIf { it.isNotBlank() },
+            mediaName = o.optJSONObject("media")?.optString("name")?.takeIf { it.isNotBlank() },
+            mediaSize = o.optJSONObject("media")?.optLong("size")?.takeIf { it > 0 },
+            encrypted = o.optBoolean("encrypted", false) || o.optString("body").startsWith("zce1:"),
+            cryptoVersion = o.optInt("cryptoVersion", if (o.optString("body").startsWith("zce1:")) 1 else 0),
         )
     }
 }
@@ -260,43 +291,94 @@ class PendingMessageWorker(appContext: Context, params: WorkerParameters) : Coro
         val localCrypto = LocalStorageCrypto(applicationContext)
         val pending = db.pending().next(20)
         if (pending.isEmpty()) return Result.success()
+
         for (item in pending) {
+            var transportTemp: File? = null
             try {
                 val chat = db.chats().byId(item.chatId) ?: error("chat_not_cached")
-                val peer = chat.peerUserId ?: error("e2ee_direct_only")
+                val peer = chat.peerUserId
                 var mediaId: String? = null
                 val pendingBody = localCrypto.reveal(item.body).orEmpty()
                 val pendingMediaName = localCrypto.reveal(item.mediaName)
-                var plainBody = pendingBody
-                var encryptedTemp: File? = null
+                var transportBody = pendingBody
+
                 if (item.localUri != null) {
                     val sourceUri = Uri.parse(item.localUri)
-                    val protectedSource = if(sourceUri.scheme=="file") File(requireNotNull(sourceUri.path)) else error("pending_media_must_be_local_file")
+                    val protectedSource = if (sourceUri.scheme == "file") File(requireNotNull(sourceUri.path)) else error("pending_media_must_be_local_file")
                     val sourceFile = File.createTempFile("zool_pending_plain_", ".tmp", applicationContext.cacheDir)
                     localCrypto.revealFile(protectedSource, sourceFile)
-                    encryptedTemp = File.createTempFile("zool_media_", ".zce", applicationContext.cacheDir)
                     try {
-                        crypto.encryptMediaFile(item.chatId,peer,item.clientId,item.type,sourceFile,encryptedTemp)
-                        val media = api.uploadMedia(Uri.fromFile(encryptedTemp), "application/octet-stream", "zool-media.zce")
-                        mediaId = media.getString("id")
-                        plainBody = JSONObject()
-                            .put("name", pendingMediaName ?: pendingBody.ifBlank { "مرفق" })
-                            .put("mime", item.mediaMime ?: "application/octet-stream")
-                            .put("size", sourceFile.length())
-                            .put("mediaEncrypted", true)
-                            .toString()
-                    } finally { sourceFile.delete() }
+                        if (peer != null) {
+                            transportTemp = File.createTempFile("zool_media_", ".zce", applicationContext.cacheDir)
+                            crypto.encryptMediaFile(item.chatId, peer, item.clientId, item.type, sourceFile, transportTemp!!)
+                            val media = api.uploadMedia(Uri.fromFile(transportTemp), "application/octet-stream", "zool-media.zce")
+                            mediaId = media.getString("id")
+                            transportBody = JSONObject()
+                                .put("name", pendingMediaName ?: pendingBody.ifBlank { "مرفق" })
+                                .put("mime", item.mediaMime ?: "application/octet-stream")
+                                .put("size", sourceFile.length())
+                                .put("mediaEncrypted", true)
+                                .toString()
+                        } else {
+                            // Group E2EE is not part of the current direct-chat E2EE beta. Keep the
+                            // local pending file encrypted at rest, reveal only a short-lived temp
+                            // file for the authenticated member-only upload, and do not attempt a
+                            // bogus one-peer ECDH derivation for the group.
+                            val media = api.uploadMedia(
+                                Uri.fromFile(sourceFile),
+                                item.mediaMime ?: "application/octet-stream",
+                                pendingMediaName ?: pendingBody.ifBlank { "attachment" },
+                            )
+                            mediaId = media.getString("id")
+                            transportBody = pendingBody
+                        }
+                    } finally {
+                        sourceFile.delete()
+                    }
                 }
-                val envelope = crypto.encryptMessage(item.chatId,peer,item.senderId,item.clientId,item.type,plainBody)
-                val remoteRaw = MessageSyncRepository.parseMessage(api.sendMessage(item.chatId,item.clientId,item.type,envelope.body,mediaId,envelope.encrypted,envelope.cryptoVersion))
-                encryptedTemp?.delete()
-                val remote = remoteRaw.copy(body=pendingBody,mediaName=pendingMediaName,mediaMime=item.mediaMime,encrypted=true,cryptoVersion=1,decryptionFailed=false)
+
+                val remoteRaw = if (peer != null) {
+                    val envelope = crypto.encryptMessage(item.chatId, peer, item.senderId, item.clientId, item.type, transportBody)
+                    MessageSyncRepository.parseMessage(
+                        api.sendMessage(item.chatId, item.clientId, item.type, envelope.body, mediaId, envelope.encrypted, envelope.cryptoVersion),
+                    )
+                } else {
+                    MessageSyncRepository.parseMessage(
+                        api.sendMessage(item.chatId, item.clientId, item.type, transportBody, mediaId, encrypted = false, cryptoVersion = 0),
+                    )
+                }
+
+                val remote = if (peer != null) {
+                    remoteRaw.copy(
+                        body = pendingBody,
+                        mediaName = pendingMediaName,
+                        mediaMime = item.mediaMime,
+                        encrypted = true,
+                        cryptoVersion = 1,
+                        decryptionFailed = false,
+                    )
+                } else {
+                    remoteRaw.copy(
+                        body = pendingBody,
+                        mediaName = pendingMediaName ?: remoteRaw.mediaName,
+                        mediaMime = item.mediaMime ?: remoteRaw.mediaMime,
+                        encrypted = false,
+                        cryptoVersion = 0,
+                        decryptionFailed = false,
+                    )
+                }
+
                 db.withTransaction {
                     db.messages().deleteById("local:${item.clientId}")
                     db.messages().upsert(remote.toEntity(localCrypto))
                     db.pending().delete(item.clientId)
                 }
-                item.localUri?.let { uriText -> runCatching { if (Uri.parse(uriText).scheme == "file") File(requireNotNull(Uri.parse(uriText).path)).delete() } }
+                item.localUri?.let { uriText ->
+                    runCatching {
+                        val uri = Uri.parse(uriText)
+                        if (uri.scheme == "file") File(requireNotNull(uri.path)).delete()
+                    }
+                }
             } catch (_: Throwable) {
                 db.pending().incrementAttempts(item.clientId)
                 if (item.attempts >= 4) {
@@ -304,6 +386,8 @@ class PendingMessageWorker(appContext: Context, params: WorkerParameters) : Coro
                     continue
                 }
                 return Result.retry()
+            } finally {
+                transportTemp?.delete()
             }
         }
         return Result.success()
@@ -328,7 +412,7 @@ class IncomingMessageSyncWorker(appContext: Context, params: WorkerParameters) :
                 if (parsed.isEmpty()) db.chats().clearAll() else db.chats().deleteMissing(parsed.map { it.id })
             }
             val page = api.messages(chatId, limit = 50)
-            val repo = MessageSyncRepository(applicationContext,api,db)
+            val repo = MessageSyncRepository(applicationContext, api, db)
             val items = (0 until page.messages.length()).map { MessageSyncRepository.parseMessage(page.messages.getJSONObject(it)) }
             items.forEach { repo.onRemoteMessage(it) }
             Result.success()
@@ -338,7 +422,7 @@ class IncomingMessageSyncWorker(appContext: Context, params: WorkerParameters) :
     }
 }
 
-private fun CachedChatEntity.toRemote(local: LocalStorageCrypto)=RemoteChat(id,type,title,peerUserId,local.reveal(lastMessage),lastMessageAt,unread)
-private fun RemoteChat.toEntity(local: LocalStorageCrypto)=CachedChatEntity(id,type,title,peerUserId,local.protect(lastMessage),lastMessageAt,unread)
-private fun CachedMessageEntity.toRemote(local: LocalStorageCrypto)=RemoteMessage(id,chatId,senderId,type,local.reveal(body).orEmpty(),createdAt,editedAt,deleted,status,clientId,mediaUrl,mediaMime,local.reveal(mediaName),mediaSize,encrypted,cryptoVersion,decryptionFailed)
-fun RemoteMessage.toEntity(local: LocalStorageCrypto)=CachedMessageEntity(id,clientId,chatId,senderId,type,local.protect(body).orEmpty(),createdAt,status,editedAt,deleted,mediaUrl,mediaMime,local.protect(mediaName),mediaSize,encrypted,cryptoVersion,decryptionFailed)
+private fun CachedChatEntity.toRemote(local: LocalStorageCrypto) = RemoteChat(id, type, title, peerUserId, local.reveal(lastMessage), lastMessageAt, unread)
+private fun RemoteChat.toEntity(local: LocalStorageCrypto) = CachedChatEntity(id, type, title, peerUserId, local.protect(lastMessage), lastMessageAt, unread)
+private fun CachedMessageEntity.toRemote(local: LocalStorageCrypto) = RemoteMessage(id, chatId, senderId, type, local.reveal(body).orEmpty(), createdAt, editedAt, deleted, status, clientId, mediaUrl, mediaMime, local.reveal(mediaName), mediaSize, encrypted, cryptoVersion, decryptionFailed)
+fun RemoteMessage.toEntity(local: LocalStorageCrypto) = CachedMessageEntity(id, clientId, chatId, senderId, type, local.protect(body).orEmpty(), createdAt, status, editedAt, deleted, mediaUrl, mediaMime, local.protect(mediaName), mediaSize, encrypted, cryptoVersion, decryptionFailed)
