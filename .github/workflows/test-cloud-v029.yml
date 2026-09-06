@@ -1,0 +1,39 @@
+name: Test ZoolChat v0.29 cloud backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ zoolchat-v0.27-cloud-beta ]
+    paths:
+      - 'cloud/v0_29/v0_29_groups_overlay.b64'
+      - '.github/workflows/test-cloud-v029.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct cloud source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/cloud-src
+          cat cloud/parts/part00.b64 cloud/parts/part01.b64 cloud/parts/part02.b64 cloud/parts/part03.b64 cloud/parts/part04.b64 cloud/parts/part05.b64 cloud/parts/part06.b64 > work/cloud.b64
+          base64 -d work/cloud.b64 > work/cloud.tar.gz
+          echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  work/cloud.tar.gz" | sha256sum -c -
+          tar -xzf work/cloud.tar.gz -C work/cloud-src
+      - name: Apply v0.29 cloud overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d cloud/v0_29/v0_29_groups_overlay.b64 > work/cloud-v029.tar.gz
+          echo "bc073a30284a818418e87a04025bb7a140f1cf968cd81e102b13ca23e1b9cdef  work/cloud-v029.tar.gz" | sha256sum -c -
+          tar -xzf work/cloud-v029.tar.gz -C work/cloud-src
+      - name: Install dependencies and compile
+        working-directory: work/cloud-src/server
+        run: |
+          npm install --no-audit --no-fund
+          npm run build

@@ -1,0 +1,162 @@
+name: Build ZoolChat v0.28.1 Profile Account APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ zoolchat-v0.27-cloud-beta ]
+    paths:
+      - 'release/v0_28/v0_28_1_profile_account_fix.b64'
+      - '.github/workflows/build-v0281-profile-apk.yml'
+      - 'cloud/API_BASE_URL.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  build-public-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate backend URL
+        id: api
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(tr -d '\r\n' < cloud/API_BASE_URL.txt)"
+          case "$API_URL" in https://*) ;; *) echo "API_BASE_URL must be HTTPS" >&2; exit 1;; esac
+          [[ "$API_URL" != *"YOUR_BACKEND_HOST"* ]] || { echo "Backend URL not configured" >&2; exit 1; }
+          echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Reassemble Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          cat \
+            release/parts/part00.b64 release/parts/part01.b64 release/parts/part02.b64 release/parts/part03.b64 \
+            release/parts/part04.b64 release/parts/part05.b64 release/parts/part06.b64 release/parts/part07.b64 \
+            release/safe/s08_0.b64 release/safe/s08_1.b64 release/safe/s08_2.b64 release/safe/s08_3.b64 release/safe/s08_4.b64 \
+            release/safe/s09_0.b64 release/safe/s09_1.b64 release/safe/s09_2.b64 release/safe/s09_3.b64 release/safe/s09_4.b64 \
+            release/parts/part10.b64 release/parts/part11.b64 \
+            release/safe/s12_0.b64 release/safe/s12_1.b64 release/safe/s12_2.b64 release/safe/s12_3.b64 \
+            release/safe/s12_4a.b64 release/safe/s12_4b.b64 release/safe/s12_4c.b64 \
+            release/parts/part13.b64 > work/ZoolChat-source.b64
+          base64 -d work/ZoolChat-source.b64 > work/ZoolChat-source.zip
+          echo "4c73c58f039a9fbe8b49ccf64825299851fb467039c884701e81fb2022d4dc03  work/ZoolChat-source.zip" | sha256sum -c -
+          unzip -q work/ZoolChat-source.zip -d work
+
+      - name: Apply v0.25 overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat release/patches/v0_25_0a.b64 release/patches/v0_25_0b.b64 release/patches/v0_25_1.b64 release/patches/v0_25_2.b64 release/patches/v0_25_3.b64 release/patches/v0_25_4.b64 > work/v025.b64
+          base64 -d work/v025.b64 > work/v025.tar.gz
+          echo "f0d35b65c854027ef04986ad9c6cbe53fd69f5984d71010b567913995be6ab6c  work/v025.tar.gz" | sha256sum -c -
+          tar -xzf work/v025.tar.gz -C work/ZoolChat_v0_24
+
+      - name: Apply v0.26 overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat release/v0_26/v026_00.b64 release/v0_26/v026_01.b64 release/v0_26/v026_02.b64 release/v0_26/v026_03.b64 release/v0_26/v026_04.b64 > work/v026.b64
+          base64 -d work/v026.b64 > work/v026.tar.gz
+          echo "1821b909a6236831aa1569572713854891544753c0d723bd37cae71fac9e7fd0  work/v026.tar.gz" | sha256sum -c -
+          tar -xzf work/v026.tar.gz -C work/ZoolChat_v0_24
+
+      - name: Apply v0.27 security fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d release/v0_27/keystore_iv_fix.b64 > work/v027.tar.gz
+          echo "efe9e69a3280c3c4478fcbbfe43552a82a3dfd165ff7971a44c3ee313aab1c4d  work/v027.tar.gz" | sha256sum -c -
+          tar -xzf work/v027.tar.gz -C work/ZoolChat_v0_24
+
+      - name: Apply v0.28 country and secure-session overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d release/v0_28/v0_28_overlay.b64 > work/v028.tar.gz
+          echo "56278c41173c8c02e6005ae5c573691e7c7e3ca7004f4e983e7dd67952a4f52f  work/v028.tar.gz" | sha256sum -c -
+          tar -xzf work/v028.tar.gz -C work/ZoolChat_v0_24
+
+      - name: Apply v0.28.1 signed-in profile data fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d release/v0_28/v0_28_1_profile_account_fix.b64 > work/v0281.tar.gz
+          echo "b782e9cafa1a4703366c36e03f7a157227284bf9d3eb9d2a914cc2396a073b4b  work/v0281.tar.gz" | sha256sum -c -
+          tar -xzf work/v0281.tar.gz -C work/ZoolChat_v0_24
+          PROFILE=work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt
+          APP=work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ZoolChatApp.kt
+          VM=work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/state/ZoolAppViewModel.kt
+          ! grep -q '"@mohamed"' "$PROFILE"
+          ! grep -q '"محمد"' "$PROFILE"
+          ! grep -q '"+966 ••• ••• ••"' "$PROFILE"
+          grep -q 'accountPhoneE164' "$PROFILE"
+          grep -q 'accountUsername' "$PROFILE"
+          grep -q 'updateProfileDisplayName' "$VM"
+          grep -q 'accountPhoneE164 = me?.phoneE164' "$APP"
+
+      - name: Prepare Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT_BUILD=work/ZoolChat_v0_24/android/build.gradle.kts
+          APP_BUILD=work/ZoolChat_v0_24/android/app/build.gradle.kts
+          SETTINGS_BUILD=work/ZoolChat_v0_24/android/settings.gradle.kts
+          sed -i 's/versionCode = 26/versionCode = 30/' "$APP_BUILD"
+          sed -i 's/versionName = "0.26.0"/versionName = "0.28.1"/' "$APP_BUILD"
+          sed -i '/id("org.jetbrains.kotlin.android")/d' "$ROOT_BUILD"
+          sed -i 's/id("org.jetbrains.kotlin.kapt") version "2.4.10" apply false/id("com.android.legacy-kapt") version "9.4.0" apply false/' "$ROOT_BUILD"
+          sed -i '/id("org.jetbrains.kotlin.android")/d' "$APP_BUILD"
+          sed -i 's/id("org.jetbrains.kotlin.kapt")/id("com.android.legacy-kapt")/' "$APP_BUILD"
+          sed -i 's/id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"/id("org.jetbrains.kotlin.plugin.compose") version "2.3.21"/' "$ROOT_BUILD"
+          sed -i '/kotlinOptions { jvmTarget = "17" }/d' "$APP_BUILD"
+          python3 - <<'PY'
+          from pathlib import Path
+          settings = Path("work/ZoolChat_v0_24/android/settings.gradle.kts")
+          s = settings.read_text()
+          marker = 'dependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)\n    repositories {\n        google()\n        mavenCentral()\n'
+          if 'maven("https://jitpack.io")' not in s:
+              if marker not in s: raise SystemExit("repositories block not found")
+              s = s.replace(marker, marker + '        maven("https://jitpack.io")\n', 1)
+              settings.write_text(s)
+          screens = Path("work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app/ui/screens")
+          for path, imports in {
+              screens / "ChatsScreen.kt": ["import androidx.compose.foundation.background"],
+              screens / "ProfileScreen.kt": ["import androidx.compose.foundation.background", "import kotlinx.coroutines.launch"],
+          }.items():
+              text = path.read_text()
+              missing = [x for x in imports if x not in text]
+              if missing:
+                  end = text.find("\n", text.find("package "))
+                  path.write_text(text[:end+1] + "\n".join(missing) + "\n" + text[end+1:])
+          PY
+          DEBUG_MANIFEST=work/ZoolChat_v0_24/android/app/src/debug/AndroidManifest.xml
+          sed -i 's/[[:space:]]android:usesCleartextTraffic="true"//g' "$DEBUG_MANIFEST"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android API 37
+        run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build APK
+        working-directory: work/ZoolChat_v0_24/android
+        run: gradle :app:assemblePublicDebug -PZOOLCHAT_API_BASE_URL='${{ steps.api.outputs.api_url }}' --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-v0.28.1-profile-account-apk
+          path: work/ZoolChat_v0_24/android/app/build/outputs/apk/public/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

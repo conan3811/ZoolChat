@@ -1,0 +1,33 @@
+name: Export ZoolChat cloud base for v0.30
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ zoolchat-v0.27-cloud-beta ]
+    paths:
+      - '.github/workflows/export-cloud-base-v030.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export-cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct cloud source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/cloud-src
+          cat cloud/parts/part00.b64 cloud/parts/part01.b64 cloud/parts/part02.b64 cloud/parts/part03.b64 cloud/parts/part04.b64 cloud/parts/part05.b64 cloud/parts/part06.b64 > work/cloud.b64
+          base64 -d work/cloud.b64 > work/cloud.tar.gz
+          echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  work/cloud.tar.gz" | sha256sum -c -
+          tar -xzf work/cloud.tar.gz -C work/cloud-src
+      - name: Upload cloud source
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-cloud-base-v030
+          path: work/cloud-src
+          if-no-files-found: error
+          retention-days: 7
