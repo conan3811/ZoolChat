@@ -90,6 +90,11 @@ async function fcmTokens(userIds: string[]) {
   const r = await pool.query(`SELECT fcm_token FROM devices WHERE user_id=ANY($1::uuid[]) AND revoked_at IS NULL`, [userIds]);
   return r.rows.map(x => x.fcm_token);
 }
+async function fcmTargets(userIds: string[]) {
+  if (!userIds.length) return [] as Array<{userId:string,token:string,messagePreviews:boolean}>;
+  const r = await pool.query(`SELECT d.user_id,d.fcm_token,COALESCE(p.message_previews,true) message_previews FROM devices d LEFT JOIN user_privacy_settings p ON p.user_id=d.user_id WHERE d.user_id=ANY($1::uuid[]) AND d.revoked_at IS NULL`,[userIds]);
+  return r.rows.map(x=>({userId:String(x.user_id),token:String(x.fcm_token),messagePreviews:x.message_previews!==false}));
+}
 async function membership(chatId: string, userId: string) {
   const r = await pool.query(`SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2`, [chatId, userId]);
   return r.rowCount === 1;
@@ -132,7 +137,7 @@ function newMeetingCode() {
   return `${part(3)}-${part(4)}-${part(3)}`;
 }
 function userJson(r: any) {
-  return { id: r.id, displayName: r.display_name, username: r.username ?? null, email: r.email ?? null, emailVerified: Boolean(r.email_verified_at), phoneE164: r.phone_e164 ?? null, photoUrl: r.photo_url ?? null, about: r.about ?? '' };
+  return { id: r.id, displayName: r.display_name, username: r.username ?? null, email: r.email ?? null, emailVerified: Boolean(r.email_verified_at), phoneE164: r.phone_e164 ?? null, photoUrl: r.profile_photo_media_id ? `/api/media/${r.profile_photo_media_id}` : (r.photo_url ?? null), about: r.about ?? '' };
 }
 function mediaJson(r: any) {
   if (!r?.media_id) return null;
@@ -268,8 +273,15 @@ app.post('/api/session/bootstrap', requireAuth, async (req, res) => {
 });
 app.get('/api/me', requireAuth, async (req, res) => { const r = await pool.query(`SELECT * FROM users WHERE id=$1`, [req.zoolUser!.id]); res.json({ user: userJson(r.rows[0]) }); });
 app.put('/api/me', requireAuth, async (req, res) => {
-  const b = z.object({ displayName: z.string().trim().min(1).max(80).optional(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).nullable().optional(), about: z.string().max(160).optional(), photoUrl: z.string().url().nullable().optional() }).parse(req.body);
-  const r = await pool.query(`UPDATE users SET display_name=COALESCE($2,display_name),username=COALESCE($3,username),about=COALESCE($4,about),photo_url=COALESCE($5,photo_url),updated_at=now() WHERE id=$1 RETURNING *`, [req.zoolUser!.id, b.displayName ?? null, b.username ?? null, b.about ?? null, b.photoUrl ?? null]);
+  const b = z.object({ displayName: z.string().trim().min(1).max(80).optional(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).nullable().optional(), about: z.string().max(160).optional(), photoUrl: z.string().url().nullable().optional(), photoMediaId: z.string().uuid().nullable().optional() }).parse(req.body);
+  if (b.photoMediaId) {
+    const owned=await pool.query(`SELECT 1 FROM media_assets WHERE id=$1 AND owner_id=$2 AND mime_type LIKE 'image/%'`,[b.photoMediaId,req.zoolUser!.id]);
+    if(!owned.rowCount)return res.status(400).json({error:'invalid_profile_photo'});
+  }
+  let r = await pool.query(`UPDATE users SET display_name=COALESCE($2,display_name),username=COALESCE($3,username),about=COALESCE($4,about),photo_url=COALESCE($5,photo_url),updated_at=now() WHERE id=$1 RETURNING *`, [req.zoolUser!.id, b.displayName ?? null, b.username ?? null, b.about ?? null, b.photoUrl ?? null]);
+  if (b.photoMediaId !== undefined) {
+    r=await pool.query(`UPDATE users SET profile_photo_media_id=$2,photo_url=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[req.zoolUser!.id,b.photoMediaId]);
+  }
   res.json({ user: userJson(r.rows[0]) });
 });
 app.post('/api/devices/fcm', requireAuth, async (req, res) => {
@@ -293,22 +305,25 @@ app.delete('/api/devices/:id', requireAuth, async (req, res) => {
 app.post('/api/contacts/discover', discoveryRateLimit, requireAuth, async (req, res) => {
   const b = z.object({ phoneHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(10000) }).parse(req.body);
   if (!b.phoneHashes.length) return res.json({ contacts: [] });
-  const r = await pool.query(`SELECT id,phone_discovery_hash,display_name,username,photo_url FROM users WHERE phone_discovery_hash=ANY($1::text[]) AND id<>$2`, [b.phoneHashes, req.zoolUser!.id]);
+  const r = await pool.query(`SELECT u.id,u.phone_discovery_hash,u.display_name,u.username,
+    CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$2 AND b.user_id=u.id)) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url
+    FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id
+    WHERE u.phone_discovery_hash=ANY($1::text[]) AND u.id<>$2 AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$2 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$2))`, [b.phoneHashes, req.zoolUser!.id]);
   res.json({ contacts: r.rows.map(x => ({ userId: x.id, discoveryHash: x.phone_discovery_hash, displayName: x.display_name, username: x.username, photoUrl: x.photo_url })) });
 });
-
 app.get('/api/users/search', requireAuth, async (req, res) => {
   const q = String(req.query.q ?? '').trim();
   if (q.length < 3 || q.length > 80) return res.json({ users: [] });
   const normalizedPhone = /^\+[1-9]\d{5,14}$/.test(q) ? q : null;
   const username = q.replace(/^@/, '').toLowerCase();
-  const r = await pool.query(`SELECT id,phone_e164,display_name,username,photo_url FROM users
-    WHERE id<>$1 AND ((username IS NOT NULL AND lower(username) LIKE lower($2) || '%') OR ($3::text IS NOT NULL AND phone_e164=$3))
-    ORDER BY CASE WHEN lower(username)=lower($2) THEN 0 ELSE 1 END, lower(username) ASC NULLS LAST LIMIT 20`, [req.zoolUser!.id, username, normalizedPhone]);
+  const r = await pool.query(`SELECT u.id,u.phone_e164,u.display_name,u.username,
+    CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$1 AND b.user_id=u.id)) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url
+    FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id
+    WHERE u.id<>$1 AND ((u.username IS NOT NULL AND lower(u.username) LIKE lower($2) || '%') OR ($3::text IS NOT NULL AND u.phone_e164=$3))
+      AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$1 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$1))
+    ORDER BY CASE WHEN lower(u.username)=lower($2) THEN 0 ELSE 1 END, lower(u.username) ASC NULLS LAST LIMIT 20`, [req.zoolUser!.id, username, normalizedPhone]);
   res.json({ users: r.rows.map(x => ({ userId:x.id, phoneE164: normalizedPhone && x.phone_e164===normalizedPhone ? normalizedPhone : null, displayName:x.display_name, username:x.username, photoUrl:x.photo_url })) });
 });
-
-
 
 app.put('/api/e2ee/key', requireAuth, async (req,res)=>{
   const b=z.object({
@@ -344,7 +359,13 @@ app.post('/api/media', mediaRateLimit, requireAuth, upload.single('file'), async
   res.status(201).json({ media: { id: m.id, url: `/api/media/${m.id}`, mime: m.mime_type, name: m.original_name, size: Number(m.size_bytes) } });
 });
 app.get('/api/media/:id', requireAuth, async (req, res) => {
-  const r = await pool.query(`SELECT ma.* FROM media_assets ma WHERE ma.id=$1 AND (ma.owner_id=$2 OR EXISTS(SELECT 1 FROM messages m JOIN chat_members cm ON cm.chat_id=m.chat_id WHERE m.media_id=ma.id AND cm.user_id=$2))`, [req.params.id, req.zoolUser!.id]);
+  const r = await pool.query(`SELECT ma.* FROM media_assets ma WHERE ma.id=$1 AND (
+  ma.owner_id=$2 OR
+  EXISTS(SELECT 1 FROM messages m JOIN chat_members cm ON cm.chat_id=m.chat_id WHERE m.media_id=ma.id AND cm.user_id=$2) OR
+  EXISTS(SELECT 1 FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE u.profile_photo_media_id=ma.id AND u.account_status='active'
+    AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$2 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$2))
+    AND (COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$2 AND b.user_id=u.id))))
+)`, [req.params.id, req.zoolUser!.id]);
   if (!r.rowCount) return res.status(404).json({ error: 'media_not_found' });
   const m = r.rows[0];
   res.type(m.mime_type);
@@ -435,7 +456,13 @@ app.post('/api/chats/:id/messages', messageRateLimit, requireAuth, async (req, r
   });
   const msg = messageJson(r);
   for (const p of peers.rows) emitTo(p.user_id, { type: 'message.new', data: { ...msg, senderName: req.zoolUser!.displayName } });
-  const tokens = await fcmTokens(peerIds); const preview = pushMessagePreviews && !b.encrypted ? (b.type === 'text' ? b.body.slice(0,180) : `📎 ${r.media_name ?? b.type}`) : (b.encrypted ? '🔒 رسالة مشفرة' : 'رسالة جديدة'); await sendData(tokens, { type:'message_new', chatId, senderName:req.zoolUser!.displayName, body:preview });
+  const pushTargets=await fcmTargets(peerIds);
+  const detailedPreview=!b.encrypted ? (b.type==='text' ? b.body.slice(0,180) : `📎 ${r.media_name ?? b.type}`) : 'رسالة جديدة';
+  const detailedTokens=pushMessagePreviews&&!b.encrypted ? pushTargets.filter(x=>x.messagePreviews).map(x=>x.token) : [];
+  const genericTokens=pushTargets.filter(x=>!detailedTokens.includes(x.token)).map(x=>x.token);
+  const pushBase={type:'message_new',chatId,chatType:String(sendPolicy.rows[0]?.type??'direct'),senderName:req.zoolUser!.displayName};
+  if(detailedTokens.length)await sendData(detailedTokens,{...pushBase,body:detailedPreview});
+  if(genericTokens.length)await sendData(genericTokens,{...pushBase,body:'رسالة جديدة'});
   res.status(201).json({ message: msg });
 });
 
@@ -482,11 +509,15 @@ app.get('/api/users/:id/profile', requireAuth, async(req,res)=>{
   const shared=await pool.query(`SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$1 AND b.user_id=$2 LIMIT 1`,[uid,id]);
   const blocked=await pool.query(`SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)`,[uid,id]);
   if((uid!==id&&!shared.rowCount)||blocked.rowCount)return res.status(404).json({error:'profile_unavailable'});
-  const r=await pool.query(`SELECT u.id,u.display_name,u.username,u.about,u.photo_url,u.online,u.last_seen_at,COALESCE(p.show_online,true) show_online,COALESCE(p.show_last_seen,true) show_last_seen FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE u.id=$1 AND u.account_status='active'`,[id]);
+  const r=await pool.query(`SELECT u.id,u.display_name,u.username,u.about,u.photo_url,u.profile_photo_media_id,u.online,u.last_seen_at,COALESCE(p.show_online,true) show_online,COALESCE(p.show_last_seen,true) show_last_seen,COALESCE(p.profile_photo_visibility,'contacts') profile_photo_visibility,COALESCE(p.about_visibility,'contacts') about_visibility FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE u.id=$1 AND u.account_status='active'`,[id]);
   if(!r.rowCount)return res.status(404).json({error:'profile_unavailable'});
   const u=r.rows[0];
+  const related=uid===id||Boolean(shared.rowCount);
+  const photoVisible=uid===id||u.profile_photo_visibility==='everyone'||(u.profile_photo_visibility==='contacts'&&related);
+  const aboutVisible=uid===id||u.about_visibility==='everyone'||(u.about_visibility==='contacts'&&related);
+  const photoUrl=photoVisible?(u.profile_photo_media_id?`/api/media/${u.profile_photo_media_id}`:(u.photo_url??null)):null;
   const groups=await pool.query(`SELECT c.id,c.title FROM chats c JOIN chat_members a ON a.chat_id=c.id AND a.user_id=$1 JOIN chat_members b ON b.chat_id=c.id AND b.user_id=$2 WHERE c.type='group'`,[uid,id]);
-  res.json({profile:{id:u.id,displayName:u.display_name,username:u.username,about:u.about,photoUrl:u.photo_url,online:u.show_online?u.online:null,lastSeenAt:u.show_last_seen?u.last_seen_at:null,groupsInCommon:groups.rows}});
+  res.json({profile:{id:u.id,displayName:u.display_name,username:u.username,about:aboutVisible?u.about:null,photoUrl,online:u.show_online?u.online:null,lastSeenAt:u.show_last_seen?u.last_seen_at:null,groupsInCommon:groups.rows}});
 });
 
 app.get('/api/users/:id/presence', requireAuth, async (req,res)=>{
@@ -513,12 +544,13 @@ app.post('/api/chats/:id/typing', typingRateLimit, requireAuth, async (req,res)=
 
 app.get('/api/privacy', requireAuth, async (req,res)=>{
   const r=await pool.query(`INSERT INTO user_privacy_settings(user_id) VALUES($1) ON CONFLICT(user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING *`,[req.zoolUser!.id]);
-  const x=r.rows[0];res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online}});
+  const x=r.rows[0];res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online,profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility,messagePreviews:x.message_previews}});
 });
 app.put('/api/privacy', requireAuth, async (req,res)=>{
-  const b=z.object({readReceipts:z.boolean().optional(),showLastSeen:z.boolean().optional(),showOnline:z.boolean().optional()}).parse(req.body);
-  const r=await pool.query(`INSERT INTO user_privacy_settings(user_id,read_receipts,show_last_seen,show_online) VALUES($1,COALESCE($2,true),COALESCE($3,true),COALESCE($4,true)) ON CONFLICT(user_id) DO UPDATE SET read_receipts=COALESCE($2,user_privacy_settings.read_receipts),show_last_seen=COALESCE($3,user_privacy_settings.show_last_seen),show_online=COALESCE($4,user_privacy_settings.show_online),updated_at=now() RETURNING *`,[req.zoolUser!.id,b.readReceipts??null,b.showLastSeen??null,b.showOnline??null]);
-  const x=r.rows[0];res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online}});
+  const visibility=z.enum(['everyone','contacts','nobody']);
+  const b=z.object({readReceipts:z.boolean().optional(),showLastSeen:z.boolean().optional(),showOnline:z.boolean().optional(),profilePhotoVisibility:visibility.optional(),aboutVisibility:visibility.optional(),messagePreviews:z.boolean().optional()}).parse(req.body);
+  const r=await pool.query(`INSERT INTO user_privacy_settings(user_id,read_receipts,show_last_seen,show_online,profile_photo_visibility,about_visibility,message_previews) VALUES($1,COALESCE($2,true),COALESCE($3,true),COALESCE($4,true),COALESCE($5,'contacts'),COALESCE($6,'contacts'),COALESCE($7,true)) ON CONFLICT(user_id) DO UPDATE SET read_receipts=COALESCE($2,user_privacy_settings.read_receipts),show_last_seen=COALESCE($3,user_privacy_settings.show_last_seen),show_online=COALESCE($4,user_privacy_settings.show_online),profile_photo_visibility=COALESCE($5,user_privacy_settings.profile_photo_visibility),about_visibility=COALESCE($6,user_privacy_settings.about_visibility),message_previews=COALESCE($7,user_privacy_settings.message_previews),updated_at=now() RETURNING *`,[req.zoolUser!.id,b.readReceipts??null,b.showLastSeen??null,b.showOnline??null,b.profilePhotoVisibility??null,b.aboutVisibility??null,b.messagePreviews??null]);
+  const x=r.rows[0];res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online,profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility,messagePreviews:x.message_previews}});
 });
 app.get('/api/account/export', requireAuth, async (req,res)=>{
   const uid=req.zoolUser!.id;const user=(await pool.query(`SELECT id,phone_e164,username,display_name,about,created_at,updated_at FROM users WHERE id=$1`,[uid])).rows[0];
@@ -557,7 +589,9 @@ app.post('/api/groups', requireAuth, async (req,res)=>{
 app.get('/api/groups/:id', requireAuth, async (req,res)=>{
   const chatId=String(req.params.id),uid=req.zoolUser!.id;if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
   const g=await pool.query(`SELECT c.id,c.title,gs.*,cm.role my_role FROM chats c JOIN group_settings gs ON gs.chat_id=c.id JOIN chat_members cm ON cm.chat_id=c.id AND cm.user_id=$2 WHERE c.id=$1 AND c.type='group'`,[chatId,uid]);if(!g.rowCount)return res.status(404).json({error:'group_not_found'});
-  const members=await pool.query(`SELECT u.id user_id,u.display_name,u.username,u.photo_url,cm.role,cm.joined_at FROM chat_members cm JOIN users u ON u.id=cm.user_id WHERE cm.chat_id=$1 ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.display_name`,[chatId]);
+  const members=await pool.query(`SELECT u.id user_id,u.display_name,u.username,
+  CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')<>'nobody' AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$2 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$2)) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url,
+  cm.role,cm.joined_at FROM chat_members cm JOIN users u ON u.id=cm.user_id LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE cm.chat_id=$1 ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.display_name`,[chatId,uid]);
   const x=g.rows[0];res.json({group:{id:x.id,title:x.title,description:x.description,photoUrl:x.photo_url,inviteCode:x.invite_code,myRole:x.my_role,onlyAdminsSend:x.only_admins_send,onlyAdminsEdit:x.only_admins_edit,onlyAdminsAdd:x.only_admins_add,approveNewMembers:x.approve_new_members,disappearingSeconds:Number(x.disappearing_seconds||0),members:members.rows.map(m=>({userId:m.user_id,displayName:m.display_name,username:m.username,photoUrl:m.photo_url,role:m.role,joinedAt:new Date(m.joined_at).toISOString()}))}});
 });
 app.put('/api/groups/:id', requireAuth, async (req,res)=>{

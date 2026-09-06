@@ -11,8 +11,8 @@ try{
  chat=(await pool.query("INSERT INTO chats(type) VALUES('group') RETURNING id")).rows[0].id;
  for(const u of [host,guest])await pool.query('INSERT INTO chat_members(chat_id,user_id) VALUES($1,$2)',[chat,u.id]);
  assert.equal((await call(outsider,`/api/users/${guest.id}/profile`)).status,404);
- const privacy=await call(guest,'/api/privacy',{showOnline:false,showLastSeen:false,profilePhotoVisibility:'nobody',aboutVisibility:'nobody'},'PUT');
- assert.equal(privacy.status,200);assert.equal(privacy.data.privacy.profilePhotoVisibility,'nobody');assert.equal(privacy.data.privacy.aboutVisibility,'nobody');
+ const privacy=await call(guest,'/api/privacy',{showOnline:false,showLastSeen:false,profilePhotoVisibility:'nobody',aboutVisibility:'nobody',messagePreviews:false},'PUT');
+ assert.equal(privacy.status,200);assert.equal(privacy.data.privacy.profilePhotoVisibility,'nobody');assert.equal(privacy.data.privacy.aboutVisibility,'nobody');assert.equal(privacy.data.privacy.messagePreviews,false);
  const p=await call(host,`/api/users/${guest.id}/profile`);assert.equal(p.status,200);assert.equal(p.data.profile.online,null);assert.equal(p.data.profile.lastSeenAt,null);assert.equal(p.data.profile.about,null);assert.equal(p.data.profile.photoUrl,null);assert.ok(!('email' in p.data.profile));assert.ok(!('phoneE164' in p.data.profile));
  const me=await call(guest,'/api/me');assert.equal(me.status,200);assert.equal(me.data.user.about,'Private validation about');assert.ok('email' in me.data.user);
  const msg=(await pool.query("INSERT INTO messages(chat_id,sender_id,client_id,type,body,encrypted) VALUES($1,$2,$3,'text','See https://example.invalid/resource',false) RETURNING id",[chat,host.id,randomUUID()])).rows[0];messageId=msg.id;
