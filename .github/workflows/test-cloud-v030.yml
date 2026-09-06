@@ -15,6 +15,20 @@ permissions:
 jobs:
   test-cloud:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: zoolchat
+          POSTGRES_PASSWORD: zoolchat
+          POSTGRES_DB: zoolchat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zoolchat -d zoolchat"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - name: Reconstruct cloud base
@@ -48,3 +62,27 @@ jobs:
         run: |
           set -euo pipefail
           docker build -t zoolchat-v030-test ./cloud
+      - name: Smoke test production container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name zoolchat-v030-smoke --network host \
+            -e PORT=8080 \
+            -e DATABASE_URL='postgres://zoolchat:zoolchat@127.0.0.1:5432/zoolchat' \
+            -e FREE_AUTH_ENABLED=true \
+            -e FIREBASE_AUTH_ENABLED=false \
+            -e DEV_AUTH_ENABLED=false \
+            -e TRUST_PROXY=true \
+            zoolchat-v030-test
+          trap 'docker logs zoolchat-v030-smoke || true; docker stop zoolchat-v030-smoke >/dev/null 2>&1 || true' EXIT
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health > /tmp/health.json; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1
+          cat /tmp/health.json
+          node -e "const h=require('/tmp/health.json'); if(!h.ok || h.service!=='zoolchat-server' || h.db!==true) process.exit(1)"
