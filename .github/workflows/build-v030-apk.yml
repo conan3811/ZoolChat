@@ -103,6 +103,30 @@ jobs:
           echo "13b4886fecfa484ee09051b059c62f0880ca4e1bb24fcc9f6a68081504ee65f8  work/v030.tar.gz" | sha256sum -c -
           tar -xzf work/v030.tar.gz -C work/ZoolChat_v0_24
 
+      - name: Apply v0.30 Kotlin syntax corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app")
+          zool = root / "ZoolChatApp.kt"
+          s = zool.read_text()
+          old = '        }\n    }\n}\n\n@Composable\nprivate fun ZoolBottomBar'
+          new = '        }\n    }\n\n@Composable\nprivate fun ZoolBottomBar'
+          if old not in s:
+              raise SystemExit("ZoolChatApp syntax-fix anchor not found")
+          zool.write_text(s.replace(old, new, 1))
+
+          meet = root / "ui/screens/MeetScreen.kt"
+          s = meet.read_text()
+          old = 'TextButton(onClick=onDone){Text(t("تم"))}}\n\n@Composable private fun MeetRoom'
+          new = 'TextButton(onClick=onDone){Text(t("تم"))}}}\n\n@Composable private fun MeetRoom'
+          if old not in s:
+              raise SystemExit("MeetScreen syntax-fix anchor not found")
+          meet.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Validate v0.30 behavior wiring
         shell: bash
         run: |
