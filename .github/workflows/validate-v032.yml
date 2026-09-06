@@ -9,6 +9,27 @@ concurrency:
   group: zoolchat-v032-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  live-backend-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify current live backend dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(tr -d '\r\n' < cloud/API_BASE_URL.txt)"
+          case "$API_URL" in https://*) ;; *) echo "Live backend configuration is invalid" >&2; exit 1;; esac
+          if ! HEALTH_JSON="$(curl --fail --silent --max-time 15 "$API_URL/health")"; then
+            echo "Live backend health check failed" >&2
+            exit 1
+          fi
+          HEALTH_JSON="$HEALTH_JSON" node - <<'NODE'
+          const h=JSON.parse(process.env.HEALTH_JSON||'{}');
+          const required=['ok','db','livekitConfigured','firebaseConfigured'];
+          const missing=required.filter(k=>h[k]!==true);
+          if(missing.length){console.error(`Live backend dependency check failed: ${missing.join(',')}`);process.exit(1)}
+          console.log(`PASS: live backend dependencies healthy (version ${String(h.version||'unknown')})`);
+          NODE
   backend:
     runs-on: ubuntu-latest
     services:
@@ -20,9 +41,19 @@ jobs:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports: ['5432:5432']
         options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.30.6
+        ports:
+          - 1025:1025
+          - 8025:8025
     env:
       DATABASE_URL: postgresql://postgres@localhost:5432/zoolchat_test
       FIREBASE_AUTH_ENABLED: 'false'
+      MAIL_HOST: 127.0.0.1
+      MAIL_PORT: '1025'
+      MAIL_FROM: ZoolChat Validation <noreply@example.invalid>
+      MAIL_REQUIRE_TLS: 'false'
+      EMAIL_RATE_LIMIT_PER_15_MINUTES: '100'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,6 +74,7 @@ jobs:
             sleep 1
           done
           node tests/read-state.mjs
+          node tests/smtp-delivery.mjs
           node tests/email-recovery.mjs
           node tests/profile-meeting.mjs
         working-directory: server
