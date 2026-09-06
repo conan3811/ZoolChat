@@ -74,7 +74,11 @@ jobs:
           if not body.get('ok') or not body.get('db'):
               raise SystemExit('Backend health is not OK or database is unavailable')
           if strict:
-              missing=[k for k in ('livekit','firebase') if not body.get(k)]
+              checks={
+                  'livekitConfigured': bool(body.get('livekitConfigured')),
+                  'firebaseConfigured': bool(body.get('firebaseConfigured')),
+              }
+              missing=[name for name, ready in checks.items() if not ready]
               if missing:
                   raise SystemExit('Backend runtime not final: missing ' + ', '.join(missing))
           PY
