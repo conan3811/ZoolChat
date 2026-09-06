@@ -16,11 +16,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.zoolchat.app.network.ApiClient
+import com.zoolchat.app.network.ApiException
 import com.zoolchat.app.ui.i18n.I18n
 import com.zoolchat.app.ui.i18n.AppLanguage
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URLEncoder
+
+private val accountUsernamePattern=Regex("^[A-Za-z0-9_.]{3,32}$")
 
 @Composable
 fun AccountIdentityScreen(api:ApiClient,onBack:()->Unit,onChanged:()->Unit) {
@@ -37,6 +40,19 @@ fun AccountIdentityScreen(api:ApiClient,onBack:()->Unit,onChanged:()->Unit) {
     var busy by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf("") }
     fun run(action:suspend()->Unit) { busy=true;scope.launch { try { action() } catch(_:Exception) { result=label("تعذر إكمال الطلب. تحقق من البيانات وحاول لاحقاً.","Unable to complete request. Check your details and try later.") } finally { busy=false } } }
+
+    suspend fun usernameAvailable(clean:String):Boolean {
+        val q=URLEncoder.encode(clean,"UTF-8")
+        return try {
+            api.get("/api/me/availability?username=$q").getBoolean("usernameAvailable")
+        } catch(e:ApiException) {
+            if(e.status!=404)throw e
+            // v0.31 has username search but not the v0.32 availability endpoint. Search results
+            // exclude the signed-in account, so an exact result means another user owns the name.
+            val arr=api.searchUsers(clean)
+            (0 until arr.length()).none{i->arr.getJSONObject(i).optString("username").equals(clean,true)}
+        }
+    }
 
     val photoLauncher=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri?->
         if(uri!=null){
@@ -56,7 +72,7 @@ fun AccountIdentityScreen(api:ApiClient,onBack:()->Unit,onChanged:()->Unit) {
         val user=api.get("/api/me").getJSONObject("user")
         displayName=user.optString("displayName").takeUnless{it=="null"}.orEmpty()
         about=user.optString("about").takeUnless{it=="null"}.orEmpty()
-        username=user.optString("username").takeUnless { it=="null" }.orEmpty()
+        username=user.optString("username").takeUnless { it=="null" }.orEmpty().takeUnless{it.startsWith("zc_tmp_")}.orEmpty()
         email=user.optString("email").takeUnless { it=="null" }.orEmpty()
         result=if(user.optBoolean("emailVerified"))label("البريد موثق","Email verified") else label("وثق بريدك لتتمكن من استرداد كلمة المرور.","Verify your email to enable password recovery.")
     } }
@@ -75,11 +91,14 @@ fun AccountIdentityScreen(api:ApiClient,onBack:()->Unit,onChanged:()->Unit) {
         }
 
         HorizontalDivider(Modifier.padding(vertical=16.dp))
-        OutlinedTextField(username,{username=it.lowercase()},label={Text(label("اسم المستخدم","Username"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=!busy)
+        OutlinedTextField(username,{username=it.trim().removePrefix("@").take(32)},label={Text(label("اسم المستخدم","Username"))},prefix={Text("@")},supportingText={Text(label("3–32 حرفاً: حروف إنجليزية، أرقام، _ أو .","3–32 characters: letters, numbers, _ or ."))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=!busy)
         Button(enabled=!busy,onClick={run {
-            val q=URLEncoder.encode(username,"UTF-8")
-            if(!api.get("/api/me/availability?username=$q").getBoolean("usernameAvailable")) { result=label("اسم المستخدم مستخدم بالفعل","Username is already used");return@run }
-            api.put("/api/me",JSONObject().put("username",username));onChanged();result=label("تم حفظ اسم المستخدم","Username saved")
+            val clean=username.trim().removePrefix("@").lowercase()
+            if(!accountUsernamePattern.matches(clean)){result=label("اسم المستخدم غير صالح","Invalid username");return@run}
+            if(!usernameAvailable(clean)) { result=label("اسم المستخدم مستخدم بالفعل","Username is already used");return@run }
+            val saved=api.put("/api/me",JSONObject().put("username",clean)).getJSONObject("user")
+            username=saved.optString("username",clean).takeUnless{it=="null"}.orEmpty()
+            onChanged();result=label("تم حفظ اسم المستخدم","Username saved")
         }}){Text(label("تحقق واحفظ اسم المستخدم","Check and save username"))}
         OutlinedTextField(email,{email=it.trim();pending=false;code=""},label={Text(label("البريد الإلكتروني","Email"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=!busy)
         Button(enabled=!busy,onClick={run {
