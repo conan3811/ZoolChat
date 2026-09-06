@@ -17,7 +17,7 @@ import { requireAuth } from './auth.js';
 import { createSession, hashPassword, revokeRefreshToken, rotateRefreshToken, verifyPassword, resolveAccessToken } from './freeAuth.js';
 import { deleteFirebaseUser, sendData, verifyFirebaseToken } from './firebase.js';
 import { installMeetingInvitations } from './meetingInvitations.js';
-import { installEmailRecovery } from './emailRecovery.js';
+import { emailDeliveryConfigured, installEmailRecovery } from './emailRecovery.js';
 import { installAdmin } from './admin.js';
 
 const app = express();
@@ -163,7 +163,7 @@ async function livekitToken(userId: string, displayName: string, roomName: strin
 }
 
 app.get('/health', async (_req, res) => {
-  try { await pool.query('select 1'); res.json({ ok: true, service: 'zoolchat-server', version: '0.31.0', adminConfigured: Boolean(process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.length >= 12), db: true, livekitConfigured: Boolean(wsUrl && apiKey && apiSecret), firebaseConfigured: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS), mediaStorage: r2Enabled ? 'r2' : 'local' }); }
+  try { await pool.query('select 1'); res.json({ ok: true, service: 'zoolchat-server', version: '0.32.0-dev', adminConfigured: Boolean(process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.length >= 12), db: true, livekitConfigured: Boolean(wsUrl && apiKey && apiSecret), firebaseConfigured: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS), emailConfigured: emailDeliveryConfigured(), mediaStorage: r2Enabled ? 'r2' : 'local' }); }
   catch { res.status(503).json({ ok: false, db: false }); }
 });
 app.get('/ready', async (_req, res) => {
