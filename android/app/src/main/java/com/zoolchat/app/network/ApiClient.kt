@@ -56,7 +56,7 @@ class ApiClient(
     }
 
     private suspend fun request(method: String, path: String, body: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
-        require(!baseUrl.contains("YOUR_BACKEND_HOST")) { "ZoolChat backend URL is not configured" }
+        require(!baseUrl.contains("YOUR_BACKEND_HOST")) { "service_unavailable" }
         val builder = Request.Builder().url(baseUrl + path).header("Accept", "application/json")
         applyAuth(builder)
         when (method) {
@@ -97,6 +97,7 @@ class ApiClient(
         "/api/devices/fcm",
         JSONObject().put("token", token).put("platform", "android").put("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}".trim()),
     )
+    suspend fun revokeFcm(token: String) = post("/api/devices/fcm/revoke", JSONObject().put("token", token))
 
     suspend fun devices(): JSONArray = get("/api/devices").optJSONArray("devices") ?: JSONArray()
     suspend fun revokeDevice(deviceId: String) = delete("/api/devices/$deviceId")
@@ -131,6 +132,10 @@ class ApiClient(
         val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.toString())
         return get("/api/chats/$chatId/search?q=$encoded").optJSONArray("messages") ?: JSONArray()
     }
+    suspend fun sharedContent(chatId: String, kind: String): JSONArray {
+        val safeKind = when (kind) { "documents" -> "documents"; "links" -> "links"; else -> "media" }
+        return get("/api/chats/$chatId/shared?kind=$safeKind&limit=100").optJSONArray("items") ?: JSONArray()
+    }
 
     suspend fun sendMessage(chatId: String, clientId: String, type: String, body: String, mediaId: String? = null, encrypted: Boolean = false, cryptoVersion: Int = 0): JSONObject = post(
         "/api/chats/$chatId/messages",
@@ -154,7 +159,7 @@ class ApiClient(
     suspend fun getE2eeKey(userId: String): JSONObject = get("/api/users/$userId/e2ee-key")
 
     suspend fun uploadMedia(uri: Uri, mime: String, displayName: String): JSONObject = withContext(Dispatchers.IO) {
-        require(!baseUrl.contains("YOUR_BACKEND_HOST")) { "ZoolChat backend URL is not configured" }
+        require(!baseUrl.contains("YOUR_BACKEND_HOST")) { "service_unavailable" }
         val resolver = auth.context.contentResolver
         val temp = File.createTempFile("zool_upload_", ".bin", auth.context.cacheDir)
         val source = if (uri.scheme == "file") File(requireNotNull(uri.path)).inputStream() else resolver.openInputStream(uri)
@@ -172,6 +177,15 @@ class ApiClient(
             }
         } finally { temp.delete() }
     }
+
+    suspend fun updateProfile(displayName: String? = null, about: String? = null, photoMediaId: String? = null, clearPhoto: Boolean = false): JSONObject = put(
+        "/api/me",
+        JSONObject().apply {
+            displayName?.let { put("displayName", it) }
+            about?.let { put("about", it) }
+            if (clearPhoto) put("photoMediaId", JSONObject.NULL) else photoMediaId?.let { put("photoMediaId", it) }
+        },
+    ).getJSONObject("user")
 
     suspend fun downloadMedia(relativeUrl: String, displayName: String): File = withContext(Dispatchers.IO) {
         val url = if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) relativeUrl else baseUrl + relativeUrl
@@ -221,12 +235,20 @@ class ApiClient(
     suspend fun endMeeting(meetingId: String): JSONObject = post("/api/meetings/$meetingId/end")
 
     suspend fun getPrivacy(): JSONObject = get("/api/privacy").getJSONObject("privacy")
-    suspend fun updatePrivacy(readReceipts: Boolean? = null, showLastSeen: Boolean? = null, showOnline: Boolean? = null): JSONObject = put(
+    suspend fun updatePrivacy(
+        readReceipts: Boolean? = null,
+        showLastSeen: Boolean? = null,
+        showOnline: Boolean? = null,
+        profilePhotoVisibility: String? = null,
+        aboutVisibility: String? = null,
+    ): JSONObject = put(
         "/api/privacy",
         JSONObject().apply {
             readReceipts?.let { put("readReceipts", it) }
             showLastSeen?.let { put("showLastSeen", it) }
             showOnline?.let { put("showOnline", it) }
+            profilePhotoVisibility?.let { put("profilePhotoVisibility", it) }
+            aboutVisibility?.let { put("aboutVisibility", it) }
         },
     ).getJSONObject("privacy")
 
