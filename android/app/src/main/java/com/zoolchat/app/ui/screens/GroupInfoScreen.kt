@@ -32,6 +32,7 @@ fun GroupInfoScreen(
     contacts: List<RegisteredContact>,
     onBack: () -> Unit,
     onLeaveDone: () -> Unit,
+    onShared: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -167,6 +168,14 @@ fun GroupInfoScreen(
                         }) { Icon(Icons.Rounded.ContentCopy, t("نسخ")) }
                     },
                 )
+            }
+            item {
+                Text(t("الوسائط والروابط والمستندات"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    TextButton(onClick = { onShared("media") }) { Icon(Icons.Rounded.Image, null); Spacer(Modifier.width(4.dp)); Text(t("الوسائط")) }
+                    TextButton(onClick = { onShared("links") }) { Icon(Icons.Rounded.Link, null); Spacer(Modifier.width(4.dp)); Text(t("الروابط")) }
+                    TextButton(onClick = { onShared("documents") }) { Icon(Icons.Rounded.Description, null); Spacer(Modifier.width(4.dp)); Text(t("المستندات")) }
+                }
             }
             item {
                 Text(t("الإشعارات"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
