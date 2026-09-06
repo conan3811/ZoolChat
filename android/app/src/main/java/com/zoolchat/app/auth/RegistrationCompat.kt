@@ -89,7 +89,10 @@ suspend fun registerAccountCompatible(
     phoneE164: String,
 ): Result<Unit> {
     val primary = auth.registerAccount(email, password, phoneE164)
-    if (primary.isSuccess) return primary
+    if (primary.isSuccess) {
+        session.initialProfileSetupPending = true
+        return primary
+    }
 
     val primaryError = primary.exceptionOrNull()
     // Local validation errors and meaningful server errors should be shown directly.
@@ -128,5 +131,6 @@ suspend fun registerAccountCompatible(
             }
         }
         persistCompatibilitySession(session, responsePayload)
+        session.initialProfileSetupPending = true
     }
 }
