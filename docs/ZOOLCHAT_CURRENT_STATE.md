@@ -50,7 +50,7 @@ Current admin functionality includes:
 - LiveKit is active.
 - A Firebase-ready v0.30 APK was previously produced in chat, but do not assume old sandbox artifact links persist into a new conversation; rebuild from project sources when needed.
 
-## ZoolChat v0.32 — 11 primary requirements
+## ZoolChat v0.32 — 12 primary requirements
 
 ### 1. Adaptive Android UI
 Make the app fit every phone automatically using real system insets and available screen area.
@@ -212,8 +212,36 @@ Do not expose secrets, service-account keys, Firebase private keys, admin passwo
 
 A privacy scan should be part of release validation.
 
+### 12. Login-first start screen and automatic navigation after successful authentication
+The first authentication screen shown to a signed-out user must be the Login screen.
+
+Login screen order/behavior:
+- show mobile-number field
+- show password field
+- show Login action
+- show `Forgot password?` underneath the login controls
+- below `Forgot password?`, show `Create new account` / `تسجيل حساب جديد`
+- tapping `Create new account` opens the new-registration screen described in requirement 2
+
+Successful login behavior:
+- when the entered mobile number and password are valid, complete authentication/session persistence immediately
+- automatically navigate directly to the main Messages/Chats screen
+- do not require the user to press another button, reopen the app, go back, or manually refresh
+- fix the current bug where correct login details may succeed but the app does not open the authenticated area automatically
+
+Successful new-registration behavior:
+- when registration data is valid and account creation succeeds, show a clear on-screen success message such as `تم تسجيل الحساب بنجاح`
+- create/store the authenticated session immediately after successful registration, without requiring a separate manual login
+- automatically navigate directly to the Messages/Chats screen after the success message
+- do not leave the user stuck on the registration screen after the account has been created
+- email verification may still be required before using email-based password recovery or activating a changed email, but it must not block the requested immediate first entry into the app unless the product requirement is explicitly changed later
+
+Release acceptance test must verify both paths on a real device:
+1. valid Login -> Messages/Chats opens automatically
+2. valid new Registration -> success feedback -> Messages/Chats opens automatically
+
 ## Additional agreed improvements
-These are considered part of implementing the 11 requirements correctly:
+These are considered part of implementing the 12 requirements correctly:
 - email verification for recovery/email changes
 - one-time recovery code hashing, expiry and rate limiting
 - notification channels and Android 13+ permission handling
@@ -223,6 +251,7 @@ These are considered part of implementing the 11 requirements correctly:
 - modern Android system-inset and edge-to-edge handling
 - two-device real-world testing across foreground/background/locked-screen scenarios
 - Wi-Fi <-> mobile-data call/message testing where practical
+- authentication success must update the app navigation/session state immediately, without requiring restart or manual refresh
 
 ## Privacy note
 Do not include any personal phone number or personal email from previous chats in source code, placeholders, screenshots, docs, logs, test fixtures, or release artifacts.
