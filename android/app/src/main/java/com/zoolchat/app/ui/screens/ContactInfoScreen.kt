@@ -94,7 +94,6 @@ fun GroupMemberSheet(api:ApiClient,userId:String,myUserId:String,onDismiss:()->U
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             if(userId!=myUserId){
-                ListItem(headlineContent={Text(t("إرسال رسالة خاصة"))},modifier=Modifier.fillMaxWidth(),leadingContent={Text("💬")})
                 TextButton(onClick=onMessage,modifier=Modifier.fillMaxWidth()){Text(t("إرسال رسالة خاصة"))}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
                     TextButton(onClick={onCall(false)}){Text(t("مكالمة صوتية"))}
