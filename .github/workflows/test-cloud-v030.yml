@@ -33,6 +33,7 @@ jobs:
           base64 -d work/cloud-v030.b64 > work/cloud-v030.tar.gz
           echo "db03057803bc3b8721dfd2f40abdeb55a15ab21cf5ebb5fcd941e6b2ee996dec  work/cloud-v030.tar.gz" | sha256sum -c -
           tar -xzf work/cloud-v030.tar.gz -C work/cloud-src/server
+          sh cloud/v0_30/postfix.sh work/cloud-src/server/src/index.ts
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
