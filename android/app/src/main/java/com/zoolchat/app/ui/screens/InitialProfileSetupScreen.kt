@@ -1,32 +1,47 @@
 package com.zoolchat.app.ui.screens
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -48,8 +63,6 @@ private suspend fun usernameAvailableCompatible(api:ApiClient,username:String):B
         api.get("/api/me/availability?username=$encoded").getBoolean("usernameAvailable")
     } catch(e:ApiException) {
         if(e.status!=404) throw e
-        // The live 0.31 backend does not expose the v0.32 availability route. Search excludes
-        // the current user, so an exact username result here means another account owns it.
         val users=api.searchUsers(username)
         (0 until users.length()).none { i ->
             users.getJSONObject(i).optString("username").equals(username,ignoreCase=true)
@@ -64,11 +77,76 @@ fun InitialProfileSetupScreen(
     onComplete:()->Unit,
 ) {
     val scope=rememberCoroutineScope()
+    val context=LocalContext.current
+    var stage by remember { mutableIntStateOf(0) }
     var displayName by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var usernameState by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var photoBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->
+        photoUri=uri
+        photoBitmap=uri?.let { picked -> runCatching { context.contentResolver.openInputStream(picked)?.use(BitmapFactory::decodeStream) }.getOrNull() }
+        error=null
+    }
+
+    fun finishSetup() {
+        session.initialProfileSetupPending=false
+        onComplete()
+    }
+
+    if(stage==1){
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            verticalArrangement=Arrangement.Center,
+            horizontalAlignment=Alignment.CenterHorizontally,
+        ) {
+            Text(setupLabel("صورة الملف الشخصي","Profile photo"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+            Text(
+                setupLabel("أضف صورة تساعد أصدقاءك على التعرف عليك. يمكنك تخطي هذه الخطوة وإضافة الصورة لاحقاً.","Add a photo so friends can recognize you. You can skip this and add one later."),
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier=Modifier.padding(top=8.dp,bottom=22.dp),
+            )
+            Box(Modifier.size(150.dp),contentAlignment=Alignment.Center){
+                if(photoBitmap!=null) Image(photoBitmap!!.asImageBitmap(),null,modifier=Modifier.fillMaxSize().clip(CircleShape))
+                else Icon(Icons.Rounded.AccountCircle,null,modifier=Modifier.fillMaxSize(),tint=MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(18.dp))
+            OutlinedButton(enabled=!busy,onClick={photoPicker.launch(arrayOf("image/*"))}){
+                Icon(Icons.Rounded.PhotoCamera,null);Spacer(Modifier.size(8.dp));Text(if(photoUri==null)setupLabel("اختيار صورة","Choose photo") else setupLabel("تغيير الصورة","Change photo"))
+            }
+            error?.let { Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=10.dp)) }
+            Spacer(Modifier.height(18.dp))
+            Button(
+                enabled=!busy&&photoUri!=null,
+                modifier=Modifier.fillMaxWidth().height(52.dp),
+                onClick={
+                    val uri=photoUri?:return@Button
+                    busy=true;error=null
+                    scope.launch {
+                        try {
+                            val mime=context.contentResolver.getType(uri)?:"image/jpeg"
+                            val mediaId=api.uploadMedia(uri,mime,"profile_photo").getString("id")
+                            api.put("/api/me",JSONObject().put("photoMediaId",mediaId))
+                            finishSetup()
+                        } catch(_:Exception) {
+                            error=setupLabel("تعذر حفظ الصورة. حاول مرة أخرى أو اختر تخطي.","Unable to save the photo. Try again or choose Skip.")
+                        } finally { busy=false }
+                    }
+                },
+            ) {
+                if(busy)CircularProgressIndicator(modifier=Modifier.size(22.dp),strokeWidth=2.dp)
+                else Text(setupLabel("حفظ الصورة والمتابعة","Save photo and continue"))
+            }
+            TextButton(enabled=!busy,onClick={finishSetup},modifier=Modifier.padding(top=6.dp)){
+                Text(setupLabel("تخطي الآن","Skip for now"))
+            }
+        }
+        return
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -79,7 +157,7 @@ fun InitialProfileSetupScreen(
         Spacer(Modifier.height(16.dp))
         Text(setupLabel("أكمل ملفك الشخصي","Complete your profile"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
         Text(
-            setupLabel("اختر اسماً ظاهراً واسم مستخدم فريداً. يمكنك تعديلهما لاحقاً من إعدادات الحساب.","Choose a display name and a unique username. You can change them later in account settings."),
+            setupLabel("اختر اسماً ظاهراً واسم مستخدم فريداً. بعد ذلك يمكنك اختيار صورة للملف الشخصي.","Choose a display name and a unique username. Next you can choose a profile photo."),
             color=MaterialTheme.colorScheme.onSurfaceVariant,
             modifier=Modifier.padding(top=8.dp,bottom=20.dp),
         )
@@ -127,9 +205,8 @@ fun InitialProfileSetupScreen(
                         val result=api.put("/api/me",JSONObject().put("displayName",name).put("username",user)).getJSONObject("user")
                         session.localDisplayName=result.optString("displayName",name)
                         session.accountUsername=result.optString("username",user).takeUnless{it=="null"}.orEmpty().lowercase()
-                        session.initialProfileSetupPending=false
                         usernameState=setupLabel("اسم المستخدم متاح","Username is available")
-                        onComplete()
+                        stage=1
                     } catch(e:ApiException) {
                         val raw=e.message.orEmpty()
                         if(e.status==409||raw.contains("username_taken",true)) usernameState=setupLabel("اسم المستخدم مستخدم بالفعل","Username is already used")
@@ -140,8 +217,8 @@ fun InitialProfileSetupScreen(
                 }
             },
         ) {
-            if(busy) CircularProgressIndicator(modifier=Modifier.height(22.dp),strokeWidth=2.dp)
-            else { Icon(Icons.Rounded.CheckCircle,null);Spacer(Modifier.height(1.dp));Text(setupLabel("حفظ ومتابعة","Save and continue")) }
+            if(busy) CircularProgressIndicator(modifier=Modifier.size(22.dp),strokeWidth=2.dp)
+            else { Icon(Icons.Rounded.CheckCircle,null);Spacer(Modifier.size(6.dp));Text(setupLabel("حفظ والمتابعة","Save and continue")) }
         }
     }
 }
