@@ -1,0 +1,36 @@
+name: Check ZoolChat backend health
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/check-backend-health.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public ZoolChat backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://p01--zoolchat--8q4zpgbqbm94.code.run/health'
+          echo "GET $URL"
+          BODY="$(curl --fail --silent --show-error --max-time 25 "$URL")"
+          echo "$BODY"
+          python - "$BODY" <<'PY'
+          import json, sys
+          h=json.loads(sys.argv[1])
+          print('ok=', h.get('ok'))
+          print('db=', h.get('db'))
+          print('livekit=', h.get('livekit'))
+          print('firebase=', h.get('firebase'))
+          print('freeAuth=', h.get('freeAuth'))
+          print('devAuth=', h.get('devAuth'))
+          if not h.get('ok'):
+              raise SystemExit('Backend /health reports not ready')
+          PY
