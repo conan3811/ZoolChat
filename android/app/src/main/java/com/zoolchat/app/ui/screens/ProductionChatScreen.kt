@@ -25,6 +25,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.zoolchat.app.crypto.E2eeManager
 import com.zoolchat.app.data.RemoteMessage
 import com.zoolchat.app.data.RemotePresence
@@ -73,6 +74,7 @@ fun ProductionChatScreen(
     val mediaRepo = remember(api,e2ee,peerUserId) { MediaRepository(context.applicationContext, api, e2ee, peerUserId) }
     var text by remember { mutableStateOf("") }
     var showAttachments by remember { mutableStateOf(false) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
     var searchMode by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -140,8 +142,33 @@ fun ProductionChatScreen(
         }
     }
 
-    // The current E2EE beta is a direct-chat protocol. Never show its two-party fingerprint
-    // dialog for a group, where there is no single peer identity/key.
+    if (showEmojiPicker) {
+        val emojiRows = remember {
+            listOf(
+                "😀","😃","😄","😁","😂","🤣","😊",
+                "😍","🥰","😘","😎","🤔","😢","😭",
+                "😡","👍","👎","👏","🙏","🫶","🤝",
+                "❤️","💔","🔥","🎉","💯","✅","🌹",
+                "😉","😋","🤩","😴","🙈","💪","✨",
+            ).chunked(7)
+        }
+        ModalBottomSheet(onDismissRequest={showEmojiPicker=false}) {
+            Column(Modifier.fillMaxWidth().padding(horizontal=10.dp,bottom=18.dp)) {
+                Text(t("الرموز التعبيرية"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.padding(horizontal=8.dp,bottom=8.dp))
+                emojiRows.forEach { row ->
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {
+                        row.forEach { emoji ->
+                            TextButton(onClick={text += emoji},contentPadding=PaddingValues(4.dp),modifier=Modifier.size(46.dp)) {
+                                Text(emoji,fontSize=26.sp)
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick={showEmojiPicker=false},modifier=Modifier.align(Alignment.End)){Text(t("تم"))}
+            }
+        }
+    }
+
     if(showSecurity && !isGroup){
         LaunchedEffect(showSecurity,peerUserId){ if(peerUserId!=null) peerFingerprint=runCatching{e2ee.peerFingerprint(peerUserId)}.getOrNull() }
         AlertDialog(onDismissRequest={showSecurity=false},title={Text(t("التشفير ورمز الأمان"))},text={Column{Text(t("هذه المحادثة تستخدم E2EE beta مباشر بين الجهازين."));Spacer(Modifier.height(10.dp));Text(t("بصمة جهازك:"),fontWeight=FontWeight.Bold);Text(e2ee.localFingerprint(),style=MaterialTheme.typography.bodySmall);Spacer(Modifier.height(10.dp));Text(t("بصمة الطرف الآخر:"),fontWeight=FontWeight.Bold);Text(peerFingerprint?:t("جاري التحميل…"),style=MaterialTheme.typography.bodySmall);if(peerUserId!=null&&e2ee.peerKeyChanged(peerUserId)){Spacer(Modifier.height(10.dp));Text(t("⚠ تغيّر مفتاح الطرف الآخر. تحقق من البصمة قبل متابعة المحادثة الحساسة."),color=MaterialTheme.colorScheme.error)}}},confirmButton={TextButton(onClick={peerUserId?.let{e2ee.acknowledgePeerKey(it)};showSecurity=false}){Text(t("تم"))}})
@@ -268,7 +295,7 @@ fun ProductionChatScreen(
         Row(Modifier.fillMaxWidth().padding(7.dp).navigationBarsPadding(),verticalAlignment=Alignment.Bottom) {
             Surface(Modifier.weight(1f),shape=RoundedCornerShape(26.dp),color=MaterialTheme.colorScheme.surfaceVariant) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
-                    IconButton(onClick={}) { Icon(Icons.Rounded.Mood,null,tint=MaterialTheme.colorScheme.onSurface) }
+                    IconButton(onClick={showEmojiPicker=true}) { Icon(Icons.Rounded.Mood,null,tint=MaterialTheme.colorScheme.onSurface) }
                     TextField(
                         text,{text=it},Modifier.weight(1f),
                         placeholder={Text(t("رسالة"),color=MaterialTheme.colorScheme.onSurface)},
@@ -336,7 +363,7 @@ private fun CallEventBubble(m: RemoteMessage, mine: Boolean) {
         Spacer(Modifier.width(9.dp))
         Column {
             Text(title, fontWeight = FontWeight.SemiBold, color = if (status == "missed" && !mine) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-            Text(buildString { append(if (mode == "video") t("فيديو") else t("صوت")); if (duration.isNotBlank()) append(" • ").append(duration) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(buildString { append(if (mode == "video") t("فيديو") else t("صوت")); if (duration.isNotBlank()) append(" • ").append(duration) }, style=MaterialTheme.typography.labelSmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
