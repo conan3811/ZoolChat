@@ -1,0 +1,46 @@
+name: Test ZoolChat v0.30 cloud backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ zoolchat-v0.27-cloud-beta ]
+    paths:
+      - 'cloud/v0_30/**'
+      - '.github/workflows/test-cloud-v030.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct cloud base
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/cloud-src
+          cat cloud/parts/part00.b64 cloud/parts/part01.b64 cloud/parts/part02.b64 cloud/parts/part03.b64 cloud/parts/part04.b64 cloud/parts/part05.b64 cloud/parts/part06.b64 > work/cloud.b64
+          base64 -d work/cloud.b64 > work/cloud.tar.gz
+          echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  work/cloud.tar.gz" | sha256sum -c -
+          tar -xzf work/cloud.tar.gz -C work/cloud-src
+      - name: Apply v0.30 overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat cloud/v0_30/cloud_part_00.b64 cloud/v0_30/cloud_part_01.b64 cloud/v0_30/cloud_part_02.b64 > work/cloud-v030.b64
+          base64 -d work/cloud-v030.b64 > work/cloud-v030.tar.gz
+          echo "db03057803bc3b8721dfd2f40abdeb55a15ab21cf5ebb5fcd941e6b2ee996dec  work/cloud-v030.tar.gz" | sha256sum -c -
+          tar -xzf work/cloud-v030.tar.gz -C work/cloud-src/server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/cloud-src/server/package-lock.json
+      - name: Install and compile
+        working-directory: work/cloud-src/server
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm run typecheck
