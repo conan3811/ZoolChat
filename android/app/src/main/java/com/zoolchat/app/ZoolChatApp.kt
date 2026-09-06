@@ -60,12 +60,29 @@ fun ZoolChatApp(
 
         val vm: ZoolAppViewModel = viewModel()
         var authenticated by remember { mutableStateOf(vm.isAuthenticated) }
+        var profileSetupPending by remember { mutableStateOf(vm.session.initialProfileSetupPending) }
 
         if (!authenticated) {
-            PhoneAuthScreen(vm.auth,vm.session) { authenticated = vm.isAuthenticated }
+            PhoneAuthScreen(vm.auth,vm.session) {
+                authenticated = vm.isAuthenticated
+                profileSetupPending = vm.session.initialProfileSetupPending
+            }
             return@CompositionLocalProvider
         }
-        LaunchedEffect(authenticated) { vm.bootstrap(); vm.discoverContacts() }
+
+        if (profileSetupPending) {
+            InitialProfileSetupScreen(vm.api,vm.session) {
+                profileSetupPending = vm.session.initialProfileSetupPending
+            }
+            return@CompositionLocalProvider
+        }
+
+        LaunchedEffect(authenticated,profileSetupPending) {
+            if(authenticated&&!profileSetupPending) {
+                vm.bootstrap()
+                vm.discoverContacts()
+            }
+        }
         ProductionNav(
             vm = vm,
             themeMode = themeMode,
@@ -80,7 +97,10 @@ fun ZoolChatApp(
             onIncomingCallConsumed = onIncomingCallConsumed,
             openChatId = openChatId,
             onOpenChatConsumed = onOpenChatConsumed,
-            onSignedOut = { authenticated = vm.isAuthenticated },
+            onSignedOut = {
+                authenticated = vm.isAuthenticated
+                profileSetupPending = vm.session.initialProfileSetupPending
+            },
         )
     }
 }
@@ -176,11 +196,16 @@ private fun ProductionNav(
             }
             composable("contact/{peer}/{chat}") { entry ->
                 val peer=entry.arguments?.getString("peer").orEmpty();val chat=entry.arguments?.getString("chat").orEmpty()
+                val c=chats.firstOrNull{it.id==chat}
+                val fallback=contacts.firstOrNull{it.userId==peer} ?: searchResults.firstOrNull{it.userId==peer}
                 ContactInfoScreen(
                     api=vm.api,
                     userId=peer,
                     chatId=chat,
                     messages=messages[chat].orEmpty(),
+                    fallbackDisplayName=fallback?.displayName?:c?.title,
+                    fallbackUsername=fallback?.username,
+                    fallbackPhotoUrl=fallback?.photoUrl,
                     onBack={nav.popBackStack()},
                     onMessage={vm.openDirect(peer){nav.navigate("prodchat/$it")}},
                     onCall={video->nav.navigate("livecall/new/$peer/$video")},
@@ -191,7 +216,14 @@ private fun ProductionNav(
                 val chat=entry.arguments?.getString("chat").orEmpty();val kind=entry.arguments?.getString("kind").orEmpty();val c=chats.firstOrNull{it.id==chat}
                 SharedContentScreen(vm.api,vm.e2ee,c?.peerUserId,chat,kind,messages[chat].orEmpty()){nav.popBackStack()}
             }
-            composable("stories"){StoriesScreen{nav.navigate("profile")}}
+            composable("stories"){
+                StoriesScreen(
+                    api=vm.api,
+                    myUserId=me?.id.orEmpty(),
+                    contacts=contacts,
+                    onOpenSettings={nav.navigate("profile")},
+                )
+            }
             composable("communities"){CommunitiesScreen{nav.navigate("profile")}}
             composable("calls"){
                 ProductionCallsScreen(
