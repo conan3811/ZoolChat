@@ -12,6 +12,7 @@ import com.zoolchat.app.R
 import com.zoolchat.app.auth.AuthRepository
 import com.zoolchat.app.auth.SessionStore
 import com.zoolchat.app.network.ApiClient
+import com.zoolchat.app.notifications.MeetingJoinRequestRinger
 import com.zoolchat.app.notifications.NotificationHelper
 import com.zoolchat.app.sync.MessageSyncRepository
 import org.json.JSONObject
@@ -55,10 +56,24 @@ class RealtimeForegroundService : Service() {
             "call.ended","call.declined"->{
                 val id=event.optJSONObject("data")?.optString("callId").orEmpty(); if(id.isNotBlank()) getSystemService(NotificationManager::class.java).cancel(id.hashCode())
             }
+            "meeting.join_request"->{
+                val meetingId=event.optJSONObject("data")?.optString("meetingId").orEmpty()
+                if(meetingId.isNotBlank())MeetingJoinRequestRinger.start(this,meetingId)
+            }
+            "meeting.waiting_changed"->{
+                val data=event.optJSONObject("data")?:return
+                val meetingId=data.optString("meetingId");if(meetingId.isBlank())return
+                if(data.optInt("waiting",0)>0)MeetingJoinRequestRinger.start(this,meetingId)
+                else MeetingJoinRequestRinger.stop(meetingId)
+            }
+            "meeting.ended"->{
+                val meetingId=event.optJSONObject("data")?.optString("meetingId").orEmpty()
+                if(meetingId.isNotBlank())MeetingJoinRequestRinger.stop(meetingId)
+            }
         }
     }
 
-    override fun onDestroy(){ realtime?.close(); realtime=null; super.onDestroy() }
+    override fun onDestroy(){ realtime?.close(); realtime=null;MeetingJoinRequestRinger.stopAll();super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
