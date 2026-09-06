@@ -59,9 +59,6 @@ fun ZoolChatApp(
         }
 
         val vm: ZoolAppViewModel = viewModel()
-        var onboarding by remember { mutableStateOf(vm.session.onboardingComplete) }
-        var contactsExplained by remember { mutableStateOf(vm.session.contactsExplained) }
-        var notificationsExplained by remember { mutableStateOf(vm.session.notificationsExplained) }
         var authenticated by remember { mutableStateOf(vm.isAuthenticated) }
 
         if (!authenticated) {
@@ -120,7 +117,18 @@ private fun ProductionNav(
     LaunchedEffect(incomingCall){if(incomingCall!=null){nav.navigate("livecall/incoming/${incomingCall.callId}/${incomingCall.video}/${incomingCall.autoAccept}");onIncomingCallConsumed()}}
     LaunchedEffect(realtimeIncoming){if(realtimeIncoming!=null){nav.navigate("livecall/incoming/${realtimeIncoming!!.first}/${realtimeIncoming!!.second}/false");vm.consumeIncomingRealtimeCall()}}
     LaunchedEffect(openChatId){if(!openChatId.isNullOrBlank()){nav.navigate(if(openChatId=="__meet__") "meet" else "prodchat/$openChatId");onOpenChatConsumed()}}
-    memberId?.let { id -> GroupMemberSheet(vm.api,id,me?.id.orEmpty(),{memberId=null},{memberId=null;vm.openDirect(id){nav.navigate("prodchat/$it")}},{video->memberId=null;nav.navigate("livecall/new/$id/$video")},{memberId=null;if(id==me?.id)nav.navigate("profile") else nav.navigate("contact/$id/$memberChatId")}) }
+    memberId?.let { id ->
+        GroupMemberSheet(
+            api=vm.api,
+            chatId=memberChatId,
+            userId=id,
+            myUserId=me?.id.orEmpty(),
+            onDismiss={memberId=null},
+            onMessage={memberId=null;vm.openDirect(id){nav.navigate("prodchat/$it")}},
+            onCall={video->memberId=null;nav.navigate("livecall/new/$id/$video")},
+            onProfile={memberId=null;if(id==me?.id)nav.navigate("profile") else nav.navigate("contact/$id/$memberChatId")},
+        )
+    }
     Scaffold(Modifier.fillMaxSize(),containerColor=MaterialTheme.colorScheme.background,bottomBar={if(showBottom)ZoolBottomBar(nav)}){inner->
         NavHost(nav,"chats",Modifier.padding(inner)){
             composable("chats"){ProductionChatsScreen(chats,{vm.refreshChats()},{c->nav.navigate("prodchat/${c.id}")},{nav.navigate("contacts")},{nav.navigate("group-create")},{nav.navigate("profile")})}
@@ -168,7 +176,20 @@ private fun ProductionNav(
             }
             composable("contact/{peer}/{chat}") { entry ->
                 val peer=entry.arguments?.getString("peer").orEmpty();val chat=entry.arguments?.getString("chat").orEmpty()
-                ContactInfoScreen(vm.api,peer,chat,messages[chat].orEmpty(),{nav.popBackStack()},{vm.openDirect(peer){nav.navigate("prodchat/$it")}},{video->nav.navigate("livecall/new/$peer/$video")})
+                ContactInfoScreen(
+                    api=vm.api,
+                    userId=peer,
+                    chatId=chat,
+                    messages=messages[chat].orEmpty(),
+                    onBack={nav.popBackStack()},
+                    onMessage={vm.openDirect(peer){nav.navigate("prodchat/$it")}},
+                    onCall={video->nav.navigate("livecall/new/$peer/$video")},
+                    onShared={kind->nav.navigate("shared/$chat/$kind")},
+                )
+            }
+            composable("shared/{chat}/{kind}"){entry->
+                val chat=entry.arguments?.getString("chat").orEmpty();val kind=entry.arguments?.getString("kind").orEmpty();val c=chats.firstOrNull{it.id==chat}
+                SharedContentScreen(vm.api,vm.e2ee,c?.peerUserId,chat,kind,messages[chat].orEmpty()){nav.popBackStack()}
             }
             composable("stories"){StoriesScreen{nav.navigate("profile")}}
             composable("communities"){CommunitiesScreen{nav.navigate("profile")}}
@@ -182,7 +203,17 @@ private fun ProductionNav(
                 )
             }
             composable("meet"){MeetScreen(vm.api,me?.id.orEmpty(),me?.displayName?:"ZoolChat"){nav.navigate("profile")}}
-            composable("group-info/{id}"){e->val id=e.arguments?.getString("id").orEmpty();GroupInfoScreen(vm.api,id,contacts,{nav.popBackStack()}){vm.refreshChats();nav.navigate("chats"){popUpTo("chats"){inclusive=true}}}}
+            composable("group-info/{id}"){e->
+                val id=e.arguments?.getString("id").orEmpty()
+                GroupInfoScreen(
+                    api=vm.api,
+                    chatId=id,
+                    contacts=contacts,
+                    onBack={nav.popBackStack()},
+                    onLeaveDone={vm.refreshChats();nav.navigate("chats"){popUpTo("chats"){inclusive=true}}},
+                    onShared={kind->nav.navigate("shared/$id/$kind")},
+                )
+            }
             composable("profile"){
                 ProfileScreen(
                     themeMode=themeMode,
@@ -209,7 +240,7 @@ private fun ProductionNav(
             }
             composable("about"){ AboutScreen { nav.popBackStack() } }
             composable("edit-profile") { AccountIdentityScreen(vm.api,{nav.popBackStack()},{vm.bootstrap()}) }
-            composable("privacy"){PrivacyScreen(vm.api){nav.popBackStack()}}
+            composable("privacy"){PrivacyV032Screen(vm.api){nav.popBackStack()}}
             composable("livecall/new/{peer}/{video}"){e->ProductionCallScreen(vm.api,e.arguments?.getString("peer"),null,e.arguments?.getString("video").toBoolean(),false){vm.refreshCallHistory();nav.popBackStack()}}
             composable("livecall/incoming/{callId}/{video}/{accept}"){e->ProductionCallScreen(vm.api,null,e.arguments?.getString("callId"),e.arguments?.getString("video").toBoolean(),e.arguments?.getString("accept").toBoolean()){vm.refreshCallHistory();nav.popBackStack()}}
         }
