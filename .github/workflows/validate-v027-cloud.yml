@@ -1,4 +1,4 @@
-name: Validate ZoolChat Cloud v0.30
+name: Validate ZoolChat Cloud v0.31
 
 on:
   push:
@@ -30,17 +30,20 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
-      - name: Verify packed cloud server archive
+      - name: Verify packed cloud archives
         shell: bash
         run: |
           set -euo pipefail
           cat cloud/parts/part00.b64 cloud/parts/part01.b64 cloud/parts/part02.b64 cloud/parts/part03.b64 cloud/parts/part04.b64 cloud/parts/part05.b64 cloud/parts/part06.b64 > /tmp/server.b64
           base64 -d /tmp/server.b64 > /tmp/server.tar.gz
           echo "c9575e33691bbb48074f3d8e03018c3e760dde46fe736b2b6d351c36653306b8  /tmp/server.tar.gz" | sha256sum -c -
-          tar -tzf /tmp/server.tar.gz > /tmp/server-files.txt
-          grep -q 'server/src/index.ts' /tmp/server-files.txt
+          cat cloud/v0_31/part_00.b64 cloud/v0_31/part_01.b64 cloud/v0_31/part_02.b64 cloud/v0_31/part_03.b64 cloud/v0_31/part_04.b64 > /tmp/v031.b64
+          base64 -d /tmp/v031.b64 > /tmp/v031.tar.gz
+          echo "ade435a69c499ba20bb82bfa409a16fde11841bb108908a618d99d6eca26e518  /tmp/v031.tar.gz" | sha256sum -c -
+          tar -tzf /tmp/v031.tar.gz | grep -q 'src/admin.ts'
+          tar -tzf /tmp/v031.tar.gz | grep -q 'migrations/009_admin_dashboard.sql'
       - name: Build production container
-        run: docker build -f cloud/Dockerfile cloud -t zoolchat-v030
+        run: docker build -f cloud/Dockerfile cloud -t zoolchat-v031
       - name: Start ZoolChat against PostgreSQL
         shell: bash
         run: |
@@ -52,7 +55,9 @@ jobs:
             -e FIREBASE_AUTH_ENABLED=false \
             -e DEV_AUTH_ENABLED=false \
             -e TRUST_PROXY=true \
-            zoolchat-v030
+            -e ADMIN_USERNAME=admin \
+            -e ADMIN_PASSWORD='ZoolChat-Admin-CI-2026!' \
+            zoolchat-v031
           ok=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/health > /tmp/health.json; then
@@ -63,9 +68,10 @@ jobs:
           done
           test "$ok" = 1
           cat /tmp/health.json
-          grep -q '"version":"0.30.0"' /tmp/health.json
+          grep -q '"version":"0.31.0"' /tmp/health.json
           grep -q '"db":true' /tmp/health.json
-      - name: Smoke test registration and login
+          grep -q '"adminConfigured":true' /tmp/health.json
+      - name: Smoke test registration, login and Admin dashboard
         shell: bash
         run: |
           set -euo pipefail
@@ -73,10 +79,27 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"email":"ci@example.com","username":"zoolchat_ci","password":"ZoolChat-CI-2026!","phoneE164":"+966500000001","deviceName":"CI"}')
           echo "$REGISTER" | grep -q 'accessToken'
+          USER_ID=$(python -c 'import json,sys; print(json.load(sys.stdin)["user"]["id"])' <<< "$REGISTER")
           LOGIN=$(curl -fsS -X POST http://127.0.0.1:8080/api/auth/login \
             -H 'content-type: application/json' \
             -d '{"identifier":"zoolchat_ci","password":"ZoolChat-CI-2026!","deviceName":"CI2"}')
           echo "$LOGIN" | grep -q 'accessToken'
+          curl -fsS http://127.0.0.1:8080/admin | grep -q 'ZoolChat'
+          curl -fsS -D /tmp/admin.headers -o /tmp/admin.login -X POST http://127.0.0.1:8080/api/admin/login \
+            -H 'content-type: application/json' \
+            -d '{"username":"admin","password":"ZoolChat-Admin-CI-2026!"}'
+          grep -q '"ok":true' /tmp/admin.login
+          COOKIE=$(grep -i '^Set-Cookie:' /tmp/admin.headers | head -1 | sed -E 's/^Set-Cookie: *([^;]+).*/\1/I' | tr -d '\r')
+          test -n "$COOKIE"
+          SUMMARY=$(curl -fsS -H "Cookie: $COOKIE" http://127.0.0.1:8080/api/admin/summary)
+          echo "$SUMMARY" | grep -q '"users":1'
+          USERS=$(curl -fsS -H "Cookie: $COOKIE" 'http://127.0.0.1:8080/api/admin/users?q=zoolchat_ci')
+          echo "$USERS" | grep -q 'zoolchat_ci'
+          curl -fsS -H "Cookie: $COOKIE" -H 'content-type: application/json' -X POST "http://127.0.0.1:8080/api/admin/users/$USER_ID/suspend" -d '{"reason":"CI moderation test"}' | grep -q '"ok":true'
+          CODE=$(curl -sS -o /tmp/suspended.login -w '%{http_code}' -X POST http://127.0.0.1:8080/api/auth/login -H 'content-type: application/json' -d '{"identifier":"zoolchat_ci","password":"ZoolChat-CI-2026!"}')
+          test "$CODE" = 403
+          curl -fsS -H "Cookie: $COOKIE" -H 'content-type: application/json' -X POST "http://127.0.0.1:8080/api/admin/users/$USER_ID/activate" -d '{}' | grep -q '"ok":true'
+          curl -fsS -H "Cookie: $COOKIE" http://127.0.0.1:8080/api/admin/audit | grep -q 'user.suspend'
       - name: Container logs
         if: always()
         run: docker logs zoolchat || true
