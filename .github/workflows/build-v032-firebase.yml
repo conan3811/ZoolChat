@@ -1,0 +1,53 @@
+name: Build ZoolChat v0.32 Firebase APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  firebase-apk:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ZOOLCHAT_GOOGLE_SERVICES_JSON_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require Firebase client configuration secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_SERVICES_JSON_BASE64:-}" ]; then
+            echo "Firebase client configuration secret is not configured" >&2
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > android/app/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('android/app/google-services.json')
+          d=json.loads(p.read_text())
+          packages={c.get('client_info',{}).get('android_client_info',{}).get('package_name') for c in d.get('client',[])}
+          if 'com.zoolchat.app' not in packages:
+              raise SystemExit('Firebase client configuration does not match ZoolChat package')
+          print('PASS: Firebase client configuration matches ZoolChat package')
+          PY
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Build and lint Firebase-enabled public APK
+        working-directory: android
+        run: gradle :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+      - name: Remove source Firebase configuration before artifact upload
+        if: always()
+        run: rm -f android/app/google-services.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-v0.32-Firebase-publicDebug
+          path: android/app/build/outputs/apk/public/debug/*.apk
+          if-no-files-found: error
