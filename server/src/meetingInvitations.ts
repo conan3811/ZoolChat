@@ -4,7 +4,9 @@ import {rateLimit} from 'express-rate-limit';
 import {pool,tx} from './db.js';
 import {requireAuth} from './auth.js';
 import {sendData} from './firebase.js';
+import {installProfileV032} from './profileV032.js';
 export function installMeetingInvitations(app:Express,emit:(id:string,event:unknown)=>void) {
+ installProfileV032(app);
  const limit=rateLimit({windowMs:60_000,limit:20,standardHeaders:'draft-8',legacyHeaders:false});
  app.post('/api/meetings/:id/invitations',requireAuth,limit,async(req,res)=>{
   const id=z.string().uuid().parse(req.params.id),uid=req.zoolUser!.id;
