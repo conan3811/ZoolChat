@@ -1,0 +1,40 @@
+name: Export Android APK patching tools
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/fetch-apk-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build tools and Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'build-tools;36.0.0'
+          mkdir -p export/build-tools/lib
+          cp "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" export/build-tools/
+          cp "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" export/build-tools/
+          cp "$ANDROID_SDK_ROOT/build-tools/36.0.0/lib/apksigner.jar" export/build-tools/lib/
+          curl -L --fail --silent --show-error \
+            -o export/apktool_3.0.3.jar \
+            https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  export/apktool_3.0.3.jar' | sha256sum -c -
+          chmod +x export/build-tools/apksigner export/build-tools/zipalign
+
+      - name: Upload patching tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoolchat-apk-patching-tools
+          path: export/
+          retention-days: 1
