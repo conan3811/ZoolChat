@@ -342,3 +342,23 @@ Ask ChatGPT to:
 3. inspect the latest Android source branch
 4. continue implementing v0.32 requirements systematically
 5. keep this file updated as work is completed
+
+
+## v0.32 development checkpoint — 2026-09-06
+- Development branch: `zoolchat-v0.32-development`; production branch and deployment configuration unchanged.
+- Live `/health` rechecked: 0.31.0, database/LiveKit/Firebase/admin configured; this is not a two-phone call test.
+- Actual newest successful Android build: Actions run 34020449403, commit `6e6790e221a757cd78fb3af06b70be7c882ce66a`. The v0.29 reference branch is older. The v0.30 build workflow reconstructs the base + overlays + Kotlin/build corrections; all seven archive SHA-256 checks passed locally.
+- Readable sources restored under `android/` and `server/` on the development branch. Use these for v0.32, not the historical packed overlays. Live Dockerfile still uses its original 0.31 packages.
+- First code batch: explicit Compose authentication state; registration success no longer waits for a legacy recovery-code dialog; first auth tab is Login; system safe drawing/IME insets; personal numeric placeholder and translation removed; versioned audible message channels; visible-chat notification suppression/clearing; local unread clearing independent of receipt privacy; server enforces private read receipts and monotonic read cursor; ciphertext prefix detection and one stale-peer-key refresh on AEAD failure.
+- Validation: local backend TypeScript build PASS; source privacy scan PASS. Android assemblePublicDebug + lintPublicDebug and isolated PostgreSQL read-state integration tests PASS in Actions run 34032713007 at commit `1a1df362823ae6c50d3b1ec98e5462920d7e8500`. None of the 13 primary requirements is declared fully accepted yet.
+- Firebase client configuration retrieved and project/package verified locally, without modifying it. It is excluded from Git. CI compile artifact is explicitly validation-only without Firebase and must NOT be delivered as a final APK.
+- Remaining: complete phone-only login/new registration/email recovery and verification/profile changes; remaining notification lifecycle/grouping/token work; local cache key migration and encryption verification; call audio/routing and two-phone proof; ZoolMeet invitations; contact/group profile actions and permission tests; device insets/auth acceptance tests.
+- Do not confuse successful source compilation with physical-device acceptance. No production deployment performed in this batch.
+
+### Second batch in development (not yet accepted)
+- Phone-only login UI; registration email/phone/password/confirmation, no username; compatible backend supports optional username and phone login.
+- Account identity screen checks username/email availability, saves username, verifies email before activation.
+- Additive migration 010 adds email verification and one-time code records. Codes are scrypt-hashed, expire after 15 minutes, allow at most five failed attempts, and have per-account resend cooldown plus IP limits. Reset revokes sessions/devices and closes live sockets. Existing emails are deliberately not auto-verified.
+- SMTP delivery requires MAIL_HOST, MAIL_FROM and the provider's MAIL_PORT/MAIL_USER/MAIL_PASSWORD. No production environment changed and no real email sent. SMTP delivery remains a release blocker until configured and tested.
+- Local cache alias pinned to prevent future username changes from invalidating cache; lifecycle-aware read marking added.
+- Pending CI for this batch: Android build/lint, existing read tests, and new email recovery integration tests.
