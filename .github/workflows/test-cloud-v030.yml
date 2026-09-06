@@ -6,6 +6,7 @@ on:
     branches: [ zoolchat-v0.27-cloud-beta ]
     paths:
       - 'cloud/v0_30/**'
+      - 'cloud/Dockerfile'
       - '.github/workflows/test-cloud-v030.yml'
 
 permissions:
@@ -43,3 +44,7 @@ jobs:
           npm install --no-audit --no-fund
           npm run build
           npm run typecheck
+      - name: Build production Docker image
+        run: |
+          set -euo pipefail
+          docker build -t zoolchat-v030-test ./cloud
