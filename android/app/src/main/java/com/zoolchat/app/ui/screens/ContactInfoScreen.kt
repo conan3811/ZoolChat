@@ -31,6 +31,9 @@ fun ContactInfoScreen(
     userId:String,
     chatId:String,
     messages:List<RemoteMessage>,
+    fallbackDisplayName:String?=null,
+    fallbackUsername:String?=null,
+    fallbackPhotoUrl:String?=null,
     onBack:()->Unit,
     onMessage:()->Unit,
     onCall:(Boolean)->Unit,
@@ -38,12 +41,46 @@ fun ContactInfoScreen(
 ) {
     val scope=rememberCoroutineScope();val context=LocalContext.current
     var profile by remember(userId) { mutableStateOf<JSONObject?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember(userId) { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<RemoteMessage>>(emptyList()) }
     var report by remember { mutableStateOf(false) }
     var reason by remember { mutableStateOf("") }
-    LaunchedEffect(userId) { runCatching { api.get("/api/users/$userId/profile").getJSONObject("profile") }.onSuccess { profile=it }.onFailure { error=t("تعذر عرض الملف الشخصي") } }
+    LaunchedEffect(userId,chatId,fallbackDisplayName,fallbackUsername,fallbackPhotoUrl) {
+        val remote=runCatching { api.get("/api/users/$userId/profile").getJSONObject("profile") }.getOrNull()
+        if(remote!=null){profile=remote;error=null;return@LaunchedEffect}
+
+        // A live backend can temporarily reject the richer profile endpoint even though this
+        // screen was opened from an authorized chat. Reconstruct only already-visible safe
+        // identity fields from group/chat/search data; never invent or expose email/phone.
+        val safe=JSONObject().put("id",userId)
+        var safeName:String?=null
+        var safeUsername:String?=null
+        var safePhoto:String?=null
+        val group=runCatching{api.groupInfo(chatId)}.getOrNull()
+        val members=group?.optJSONArray("members")
+        val member=(0 until (members?.length()?:0)).mapNotNull{members?.optJSONObject(it)}.firstOrNull{it.optString("userId")==userId}
+        safeName=member?.optString("displayName")?.takeIf{it.isNotBlank()}
+        safeUsername=member?.optString("username")?.takeIf{it.isNotBlank()&&it!="null"}
+        safePhoto=member?.optString("photoUrl")?.takeIf{it.isNotBlank()&&it!="null"}
+        if(safeName.isNullOrBlank())safeName=fallbackDisplayName?.takeIf{it.isNotBlank()}
+        if(safeUsername.isNullOrBlank())safeUsername=fallbackUsername?.takeIf{it.isNotBlank()}
+        if(safePhoto.isNullOrBlank())safePhoto=fallbackPhotoUrl?.takeIf{it.isNotBlank()}
+        if(safeName.isNullOrBlank()){
+            safeName=runCatching{api.getE2eeKey(userId).optString("displayName").takeIf{it.isNotBlank()}}.getOrNull()
+        }
+        if(!safeName.isNullOrBlank()){
+            safe.put("displayName",safeName)
+            safe.put("username",safeUsername?:JSONObject.NULL)
+            safe.put("photoUrl",safePhoto?:JSONObject.NULL)
+            safe.put("about",JSONObject.NULL)
+            runCatching{api.presence(userId)}.getOrNull()?.let{presence->
+                if(presence.has("online"))safe.put("online",presence.opt("online"))
+                if(presence.has("lastSeenAt"))safe.put("lastSeenAt",presence.opt("lastSeenAt"))
+            }
+            profile=safe;error=null
+        }else error=t("تعذر عرض الملف الشخصي")
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         TextButton(onClick=onBack){Text(t("رجوع"))}
         profile?.let { p ->
@@ -132,13 +169,14 @@ fun GroupMemberSheet(
     ModalBottomSheet(onDismissRequest=onDismiss){
         Column(Modifier.fillMaxWidth().padding(horizontal=20.dp).padding(bottom=24.dp),horizontalAlignment=Alignment.CenterHorizontally){
             val name=profile?.optString("displayName")?.ifBlank { null }?:member?.optString("displayName")?.ifBlank{null}?:t("عضو")
-            val photoUrl=profile?.optString("photoUrl")?.takeUnless{it.isBlank()||it=="null"}
+            val photoUrl=profile?.optString("photoUrl")?.takeUnless{it.isBlank()||it=="null"}?:member?.optString("photoUrl")?.takeUnless{it.isBlank()||it=="null"}
+            val username=profile?.optString("username")?.takeUnless{it.isBlank()||it=="null"}?:member?.optString("username")?.takeUnless{it.isBlank()||it=="null"}
             RemoteProfileAvatar(api,name,photoUrl,76.dp)
             Spacer(Modifier.height(8.dp))
             Text(name,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
-            profile?.optString("username")?.takeUnless { it.isBlank()||it=="null" }?.let { Text("@$it",color=MaterialTheme.colorScheme.onSurfaceVariant) }
+            username?.let { Text("@$it",color=MaterialTheme.colorScheme.onSurfaceVariant) }
             Text(when(memberRole){"owner"->t("المالك");"admin"->t("مشرف");else->if(userId==myUserId)t("أنت") else t("عضو")},style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.primary)
-            if(failed)Text(t("تعذر عرض الملف الشخصي"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+            if(failed&&member==null)Text(t("تعذر عرض الملف الشخصي"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp));HorizontalDivider()
             if(userId!=myUserId){
                 TextButton(onClick=onMessage,modifier=Modifier.fillMaxWidth()){Text(t("إرسال رسالة خاصة"))}
