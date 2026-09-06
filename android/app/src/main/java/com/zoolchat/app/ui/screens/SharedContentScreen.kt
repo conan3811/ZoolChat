@@ -27,7 +27,7 @@ fun SharedContentScreen(
     peerUserId:String?,
     chatId:String,
     initialKind:String="media",
-    localMessages:List<RemoteMessage>=emptyList(),
+    localMessages:List<RemoteMessage> = emptyList(),
     onBack:()->Unit,
 ){
     val context=androidx.compose.ui.platform.LocalContext.current
