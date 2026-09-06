@@ -26,6 +26,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.zoolchat.app.BuildConfig
 import com.zoolchat.app.ui.components.Avatar
 import com.zoolchat.app.network.ApiClient
 import com.zoolchat.app.ui.theme.ThemeMode
@@ -105,7 +106,7 @@ fun ProfileScreen(
         SectionLabel(t("الدعم"))
         SettingRow(Icons.Rounded.Language, t("لغة التطبيق"), if (appLanguage == AppLanguage.AR) "العربية" else "English") { showLanguageDialog = true }
         SettingRow(Icons.Rounded.HelpOutline, t("المساعدة"), t("مركز المساعدة وسياسة الخصوصية"))
-        SettingRow(Icons.Rounded.Info, t("معلومات عن التطبيق"), "ZoolChat • v0.25 Beta", onClick = onAbout)
+        SettingRow(Icons.Rounded.Info, t("معلومات عن التطبيق"), "ZoolChat • v${BuildConfig.VERSION_NAME}", onClick = onAbout)
     }
 
     if (showThemeDialog) {
@@ -213,13 +214,22 @@ fun PrivacyScreen(api: ApiClient, onBack: () -> Unit) {
     var aboutVisibility by remember { mutableStateOf(prefs.getString("about_visibility", "جهات اتصالي") ?: "جهات اتصالي") }
     var readReceipts by remember { mutableStateOf(prefs.getBoolean("read_receipts", true)) }
     var selector by remember { mutableStateOf<String?>(null) }
+    var privacyError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         runCatching { api.getPrivacy() }.onSuccess { remote ->
             readReceipts = remote.optBoolean("readReceipts", readReceipts)
-            prefs.edit().putBoolean("read_receipts", readReceipts).apply()
-        }
+            val serverLastSeen = remote.optBoolean("showLastSeen", true)
+            val serverOnline = remote.optBoolean("showOnline", true)
+            if (!serverLastSeen) lastSeen = "لا أحد"
+            if (!serverOnline) online = "نفس إعداد آخر ظهور"
+            prefs.edit()
+                .putBoolean("read_receipts", readReceipts)
+                .putString("last_seen", lastSeen)
+                .putString("online_visibility", online)
+                .apply()
+        }.onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") }
     }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -236,9 +246,13 @@ fun PrivacyScreen(api: ApiClient, onBack: () -> Unit) {
             onCheckedChange = {
                 readReceipts = it
                 prefs.edit().putBoolean("read_receipts", it).apply()
-                scope.launch { runCatching { api.updatePrivacy(readReceipts = it) } }
+                scope.launch {
+                    runCatching { api.updatePrivacy(readReceipts = it) }
+                        .onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") }
+                }
             },
         )
+        privacyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }
         SectionLabel(t("الحماية والتفاعل"))
         SettingRow(Icons.Rounded.Groups, t("المجموعات"), t("جهات اتصالي"))
         SettingRow(Icons.Rounded.Block, t("جهات الاتصال المحظورة"), t("إدارة المحظورين"))
@@ -260,7 +274,16 @@ fun PrivacyScreen(api: ApiClient, onBack: () -> Unit) {
                         Row(
                             Modifier.fillMaxWidth().clickable {
                                 when (selector) {
-                                    "lastSeen" -> { lastSeen = option; prefs.edit().putString("last_seen", option).apply() }
+                                    "lastSeen" -> {
+                                        lastSeen = option
+                                        prefs.edit().putString("last_seen", option).apply()
+                                        val showLastSeen = option != "لا أحد"
+                                        val showOnline = online == "الجميع" || (online == "نفس إعداد آخر ظهور" && showLastSeen)
+                                        scope.launch {
+                                            runCatching { api.updatePrivacy(showLastSeen = showLastSeen, showOnline = showOnline) }
+                                                .onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") }
+                                        }
+                                    }
                                     "photo" -> { profilePhoto = option; prefs.edit().putString("profile_photo_visibility", option).apply() }
                                     else -> { aboutVisibility = option; prefs.edit().putString("about_visibility", option).apply() }
                                 }
@@ -277,7 +300,15 @@ fun PrivacyScreen(api: ApiClient, onBack: () -> Unit) {
                         Text(t("من يمكنه رؤية أنني متصل الآن"), style = MaterialTheme.typography.labelLarge)
                         listOf("الجميع", "نفس إعداد آخر ظهور").forEach { option ->
                             Row(
-                                Modifier.fillMaxWidth().clickable { online = option; prefs.edit().putString("online_visibility", option).apply() }.padding(vertical = 8.dp),
+                                Modifier.fillMaxWidth().clickable {
+                                    online = option
+                                    prefs.edit().putString("online_visibility", option).apply()
+                                    val showOnline = option == "الجميع" || lastSeen != "لا أحد"
+                                    scope.launch {
+                                        runCatching { api.updatePrivacy(showOnline = showOnline) }
+                                            .onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") }
+                                    }
+                                }.padding(vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(t(option), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
