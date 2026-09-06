@@ -1,0 +1,37 @@
+name: Apply v0.32 server privacy completion
+on: [push]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+      - name: Apply server-side privacy finalizer only
+        shell: python
+        run: |
+          from pathlib import Path
+          src=Path('.github/workflows/finalize-v032-privacy.yml').read_text().splitlines()
+          shell_idx=next(i for i,x in enumerate(src) if x.strip()=='shell: python')
+          run_idx=next(i for i in range(shell_idx+1,len(src)) if src[i].strip()=='run: |')
+          end_idx=next(i for i in range(run_idx+1,len(src)) if src[i].startswith('      - name: Commit privacy completion'))
+          code=[line[10:] if line.startswith('          ') else line for line in src[run_idx+1:end_idx]]
+          compiled='\n'.join(code)+'\n'
+          server_code=compiled.split('# Android API: expose server-side preview preference.')[0]
+          exec(compile(server_code,'v032_server_privacy.py','exec'),{'__name__':'__main__'})
+          p=Path('server/tests/profile-meeting.mjs'); a=p.read_text()
+          a=a.replace("const privacy=await call(guest,'/api/privacy',{showOnline:false,showLastSeen:false,profilePhotoVisibility:'nobody',aboutVisibility:'nobody'},'PUT');","const privacy=await call(guest,'/api/privacy',{showOnline:false,showLastSeen:false,profilePhotoVisibility:'nobody',aboutVisibility:'nobody',messagePreviews:false},'PUT');",1)
+          a=a.replace("assert.equal(privacy.status,200);assert.equal(privacy.data.privacy.profilePhotoVisibility,'nobody');assert.equal(privacy.data.privacy.aboutVisibility,'nobody');","assert.equal(privacy.status,200);assert.equal(privacy.data.privacy.profilePhotoVisibility,'nobody');assert.equal(privacy.data.privacy.aboutVisibility,'nobody');assert.equal(privacy.data.privacy.messagePreviews,false);",1)
+          p.write_text(a)
+      - name: Commit server privacy and clean temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -f .github/workflows/finalize-v032-privacy.yml .github/workflows/run-finalize-v032-privacy.yml .github/workflows/run-finalize-v032-privacy-v2.yml .github/workflows/apply-v032-server-privacy.yml
+          git config user.name "ZoolChat CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add server
+          git commit -m "Enforce v0.32 profile and push privacy on server"
+          git push origin HEAD:zoolchat-v0.32-development
