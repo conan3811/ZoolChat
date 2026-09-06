@@ -40,6 +40,7 @@ jobs:
             sleep 1
           done
           node tests/read-state.mjs
+          node tests/email-recovery.mjs
         working-directory: server
   android:
     runs-on: ubuntu-latest

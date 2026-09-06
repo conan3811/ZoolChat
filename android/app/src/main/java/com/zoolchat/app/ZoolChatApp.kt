@@ -197,15 +197,7 @@ private fun ProductionNav(
                 )
             }
             composable("about"){ AboutScreen { nav.popBackStack() } }
-            composable("edit-profile") {
-                EditProfileScreen(
-                    accountDisplayName = me?.displayName,
-                    accountUsername = me?.username,
-                    accountPhoneE164 = me?.phoneE164,
-                    onDisplayNameChange = { vm.updateProfileDisplayName(it) },
-                    onBack = { nav.popBackStack() },
-                )
-            }
+            composable("edit-profile") { AccountIdentityScreen(vm.api,{nav.popBackStack()},{vm.bootstrap()}) }
             composable("privacy"){PrivacyScreen(vm.api){nav.popBackStack()}}
             composable("livecall/new/{peer}/{video}"){e->ProductionCallScreen(vm.api,e.arguments?.getString("peer"),null,e.arguments?.getString("video").toBoolean(),false){vm.refreshCallHistory();nav.popBackStack()}}
             composable("livecall/incoming/{callId}/{video}/{accept}"){e->ProductionCallScreen(vm.api,null,e.arguments?.getString("callId"),e.arguments?.getString("video").toBoolean(),e.arguments?.getString("accept").toBoolean()){vm.refreshCallHistory();nav.popBackStack()}}

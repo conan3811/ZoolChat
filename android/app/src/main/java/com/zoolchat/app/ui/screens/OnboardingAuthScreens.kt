@@ -138,176 +138,81 @@ private fun CountryDialPickerDialog(
     }
 }
 
+private fun authLabel(ar:String,en:String)=if(I18n.language==AppLanguage.AR) ar else en
+
 @Composable
 fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var createAccount by remember { mutableStateOf(false) }
-    var recoveryMode by remember { mutableStateOf(false) }
+    val scope=rememberCoroutineScope()
+    var mode by remember { mutableStateOf("login") }
     var email by remember { mutableStateOf("") }
-    var identifier by remember { mutableStateOf(session.accountUsername) }
-    var username by remember { mutableStateOf(session.accountUsername) }
-    var password by remember { mutableStateOf("") }
-    var recoveryCodeInput by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    val countries = rememberCountryDialOptions()
-    val initialRegion = remember(countries) {
-        val deviceRegion = Locale.getDefault().country.uppercase()
-        when {
-            countries.any { it.region == deviceRegion } -> deviceRegion
-            countries.any { it.region == "SA" } -> "SA"
-            else -> countries.firstOrNull()?.region.orEmpty()
-        }
-    }
-    var selectedRegion by remember { mutableStateOf(initialRegion) }
-    val selectedCountry = countries.firstOrNull { it.region == selectedRegion } ?: countries.first()
-    var countryPickerOpen by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var codeSent by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
-    var issuedRecoveryCode by remember { mutableStateOf<String?>(null) }
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
-        contentColor = MaterialTheme.colorScheme.onBackground,
-    ) {
-        Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("ZoolChat", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text(t("زول قريب.. مهما بَعُد"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(18.dp))
-            if (!recoveryMode) {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SegmentedButton(selected=createAccount,onClick={createAccount=true;error=null},shape=SegmentedButtonDefaults.itemShape(0,2)){Text(t("إنشاء حساب"))}
-                    SegmentedButton(selected=!createAccount,onClick={createAccount=false;error=null},shape=SegmentedButtonDefaults.itemShape(1,2)){Text(t("تسجيل الدخول"))}
-                }
-            } else {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick={recoveryMode=false;error=null}) { Icon(Icons.Rounded.ArrowBack,t("رجوع")) }
-                    Text(t("استرداد الحساب"), style=MaterialTheme.typography.titleLarge, fontWeight=FontWeight.Bold)
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-
-            when {
-                recoveryMode -> {
-                    OutlinedTextField(username,{username=it.lowercase()},label={Text(t("اسم المستخدم"))},prefix={Text("@")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(recoveryCodeInput,{recoveryCodeInput=it},label={Text(t("رمز الاسترداد"))},singleLine=true,modifier=Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(password,{password=it},label={Text(t("كلمة المرور الجديدة"))},singleLine=true,modifier=Modifier.fillMaxWidth(),visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation())
-                }
-                createAccount -> {
-                    OutlinedTextField(
-                        email, { email=it.trim() }, label={Text(t("البريد الإلكتروني"))}, singleLine=true, modifier=Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(username,{username=it.lowercase().replace("@","")},label={Text(t("اسم المستخدم"))},prefix={Text("@")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(password,{password=it},label={Text(t("كلمة المرور"))},singleLine=true,modifier=Modifier.fillMaxWidth(),visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation())
-                    Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedButton(
-                            onClick = { countryPickerOpen = true },
-                            modifier = Modifier.weight(1f).heightIn(min = 56.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    selectedCountry.name,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                                Text("+${selectedCountry.callingCode}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            }
-                            Icon(Icons.Rounded.ArrowDropDown, contentDescription = t("اختر الدولة"))
-                        }
-                        OutlinedTextField(
-                            value = phone,
-                            onValueChange = { phone = it.filter(Char::isDigit).take(18) },
-                            label = { Text(t("رقم الجوال بدون مفتاح الدولة")) },
-                            placeholder = { Text(t("أدخل رقم الجوال بدون المفتاح")) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1.25f),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(t("يُستخدم رقم الجوال لاكتشاف جهات اتصالك التي لديها ZoolChat. لن يظهر رقمك في نتائج البحث باسم المستخدم."), style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                else -> {
-                    OutlinedTextField(
-                        identifier, {identifier=it.trim()}, label={Text(t("البريد الإلكتروني أو اسم المستخدم"))}, singleLine=true, modifier=Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(password,{password=it},label={Text(t("كلمة المرور"))},singleLine=true,modifier=Modifier.fillMaxWidth(),visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation())
-                }
-            }
-
-            error?.let {
-                Spacer(Modifier.height(12.dp))
-                Text(t(it), color=MaterialTheme.colorScheme.error)
-            }
-            Spacer(Modifier.height(16.dp))
-            Button(onClick={
-                loading=true; error=null
-                scope.launch {
-                    if (recoveryMode) {
-                        auth.recoverFree(username,recoveryCodeInput,password)
-                            .onSuccess{android.widget.Toast.makeText(auth.context,t("تم تسجيل الحساب بنجاح"),android.widget.Toast.LENGTH_SHORT).show();onSignedIn()}
-                            .onFailure{error=it.message}
-                    } else if(createAccount) {
-                        val phoneE164 = runCatching { nationalNumberToE164(selectedCountry.region, phone) }
-                            .getOrElse {
-                                error = it.message ?: "رقم الجوال غير صالح"
-                                loading = false
-                                return@launch
-                            }
-                        auth.registerFree(email,username,password,phoneE164)
-                            .onSuccess{android.widget.Toast.makeText(auth.context,t("تم تسجيل الحساب بنجاح"),android.widget.Toast.LENGTH_SHORT).show();onSignedIn()}
-                            .onFailure{error=it.message}
-                    } else {
-                        auth.loginFree(identifier,password).onSuccess{onSignedIn()}.onFailure{error=it.message}
-                    }
-                    loading=false
-                }
-            },modifier=Modifier.fillMaxWidth().height(52.dp),enabled=!loading){
-                if (loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                else Text(when { recoveryMode -> t("استرداد وتسجيل الدخول"); createAccount -> t("إنشاء الحساب"); else -> t("دخول") })
-            }
-            if (!createAccount && !recoveryMode) {
-                TextButton(onClick={recoveryMode=true;error=null},modifier=Modifier.align(Alignment.End)){Text(t("نسيت كلمة المرور؟"))}
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(t("أهلاً بك في ZoolChat"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    var error by remember { mutableStateOf<String?>(null) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    val countries=rememberCountryDialOptions()
+    var region by remember { mutableStateOf(Locale.getDefault().country.takeIf { r -> countries.any { it.region==r } } ?: "SA") }
+    val country=countries.firstOrNull { it.region==region } ?: countries.first()
+    var picker by remember { mutableStateOf(false) }
+    fun changeMode(value:String) { mode=value; password=""; confirm=""; code=""; codeSent=false; error=null; feedback=null }
+    androidx.activity.compose.BackHandler(enabled=mode!="login"&&!loading) { changeMode("login") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.Center) {
+        Text("ZoolChat",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)
+        Text(when(mode){"register"->authLabel("تسجيل حساب جديد","Create new account");"recover"->authLabel("استرداد كلمة المرور","Password recovery");else->authLabel("تسجيل الدخول","Login")},style=MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(16.dp))
+        if(mode!="login") {
+            OutlinedTextField(email,{email=it.trim()},label={Text(authLabel("البريد الإلكتروني","Email"))},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Email),singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!loading)
         }
+        if(mode!="recover") {
+            OutlinedButton(onClick={picker=true},enabled=!loading) { Text("${country.name}  +${country.callingCode}") }
+            OutlinedTextField(phone,{phone=it.filter(Char::isDigit).take(18)},label={Text(authLabel("رقم الجوال","Mobile number"))},placeholder={Text(authLabel("أدخل رقم الجوال بدون المفتاح","Enter mobile number without country code"))},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Phone),singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!loading)
+        }
+        if(mode=="recover"&&codeSent) {
+            OutlinedTextField(code,{code=it.filter(Char::isDigit).take(8)},label={Text(authLabel("الرمز المؤقت","Temporary code"))},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth(),enabled=!loading)
+        }
+        if(mode!="recover"||codeSent) {
+            OutlinedTextField(password,{password=it},label={Text(authLabel("كلمة المرور","Password"))},singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth(),enabled=!loading)
+            if(mode!="login") OutlinedTextField(confirm,{confirm=it},label={Text(authLabel("تأكيد كلمة المرور","Confirm password"))},singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth(),enabled=!loading)
+        }
+        error?.let { Text(it,color=MaterialTheme.colorScheme.error) }
+        feedback?.let { Text(it,color=MaterialTheme.colorScheme.primary) }
+        Spacer(Modifier.height(16.dp))
+        Button(enabled=!loading,onClick={
+            loading=true; error=null
+            scope.launch {
+                try {
+                    if(mode!="login"&&(mode!="recover"||codeSent)) require(password==confirm) { authLabel("كلمتا المرور غير متطابقتين","Passwords do not match") }
+                    when(mode) {
+                        "register" -> {
+                            auth.registerAccount(email,password,nationalNumberToE164(country.region,phone)).getOrThrow()
+                            android.widget.Toast.makeText(auth.context,authLabel("تم تسجيل الحساب بنجاح","Account created successfully"),android.widget.Toast.LENGTH_SHORT).show()
+                            onSignedIn()
+                        }
+                        "recover" -> if(!codeSent) {
+                            auth.requestPasswordCode(email).getOrThrow(); codeSent=true
+                            feedback=authLabel("إذا كان البريد موثقاً ومسجلاً، سيصلك رمز صالح لمدة 15 دقيقة.","If this email is registered and verified, a code valid for 15 minutes will arrive.")
+                        } else {
+                            auth.resetPassword(email,code,password).getOrThrow();changeMode("login")
+                            feedback=authLabel("تم تغيير كلمة المرور. سجل الدخول بكلمة المرور الجديدة.","Password changed. Sign in with your new password.")
+                        }
+                        else -> { auth.loginFree(nationalNumberToE164(country.region,phone),password).getOrThrow();onSignedIn() }
+                    }
+                } catch(e:Exception) { error=e.message ?: authLabel("تعذر إكمال الطلب","Unable to complete request") }
+                finally { loading=false }
+            }
+        },modifier=Modifier.fillMaxWidth()) {
+            if(loading) CircularProgressIndicator(Modifier.size(22.dp),strokeWidth=2.dp)
+            else Text(when(mode){"register"->authLabel("إنشاء الحساب","Create account");"recover"->if(codeSent)authLabel("تغيير كلمة المرور","Reset password") else authLabel("إرسال الرمز","Send code");else->authLabel("دخول","Login")})
+        }
+        if(mode=="login") {
+            TextButton(onClick={changeMode("recover")},enabled=!loading){Text(authLabel("نسيت كلمة المرور؟","Forgot password?"))}
+            TextButton(onClick={changeMode("register")},enabled=!loading){Text(authLabel("تسجيل حساب جديد","Create new account"))}
+        } else TextButton(onClick={changeMode("login")},enabled=!loading){Text(authLabel("العودة لتسجيل الدخول","Back to login"))}
     }
-
-    if (countryPickerOpen) {
-        CountryDialPickerDialog(
-            countries = countries,
-            selectedRegion = selectedCountry.region,
-            onSelect = { selectedRegion = it.region; error = null },
-            onDismiss = { countryPickerOpen = false },
-        )
-    }
-
-    issuedRecoveryCode?.let { code ->
-        AlertDialog(
-            onDismissRequest={},
-            title={Text(t("احفظ رمز الاسترداد"))},
-            text={Column { Text(t("هذا الرمز هو طريقة استعادة الحساب المجانية إذا نسيت كلمة المرور. سيظهر الآن فقط.")); Spacer(Modifier.height(12.dp)); SelectionContainer { Text(code, fontWeight=FontWeight.Bold) } }},
-            confirmButton={Button(onClick={issuedRecoveryCode=null;onSignedIn()}){Text(t("حفظته — متابعة"))}},
-        )
-    }
+    if(picker) CountryDialPickerDialog(countries,country.region,{region=it.region},{picker=false})
 }
 
 @Composable

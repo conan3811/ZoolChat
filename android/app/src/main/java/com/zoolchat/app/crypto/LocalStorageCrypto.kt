@@ -21,10 +21,18 @@ import javax.crypto.spec.GCMParameterSpec
 /** Encrypts cached chat text/metadata at rest while keeping Room schema simple. */
 class LocalStorageCrypto(context: Context) {
     private val session = SessionStore(context)
+    private val prefs=context.getSharedPreferences("zoolchat_cache_keys",Context.MODE_PRIVATE)
 
     private fun tag(): String {
-        val raw = session.accountUsername.ifBlank { session.currentUserId ?: "zoolchat-local" }
-        return MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).take(6).joinToString("") { "%02x".format(it) }
+        val userId=session.currentUserId
+        if(userId==null) return MessageDigest.getInstance("SHA-256").digest(session.accountUsername.ifBlank { "zoolchat-local" }.toByteArray()).take(6).joinToString("") { "%02x".format(it) }
+        val pref="cache_tag_$userId"
+        prefs.getString(pref,null)?.let { return it }
+        // Preserve the legacy alias on first upgrade; pin it before future profile changes.
+        val raw=session.accountUsername.ifBlank { userId }
+        val tag=MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).take(6).joinToString("") { "%02x".format(it) }
+        prefs.edit().putString(pref,tag).commit()
+        return tag
     }
     private fun alias() = "zoolchat_local_cache_${tag()}"
 

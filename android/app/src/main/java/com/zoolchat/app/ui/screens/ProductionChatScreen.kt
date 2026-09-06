@@ -110,16 +110,19 @@ fun ProductionChatScreen(
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { val (n,m)=fileInfo(it,"video/*"); onSendMedia(it,m,n) } }
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { val (n,m)=fileInfo(it,"application/octet-stream"); onSendMedia(it,m,n) } }
 
-    DisposableEffect(chatId) {
+    val lifecycleOwner=androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(chatId,lifecycleOwner) {
+        val observer=androidx.lifecycle.LifecycleEventObserver { _, event -> if(event==androidx.lifecycle.Lifecycle.Event.ON_RESUME) onMarkRead() }
+        lifecycleOwner.lifecycle.addObserver(observer)
         com.zoolchat.app.notifications.ConversationVisibility.chatId = chatId
         com.zoolchat.app.notifications.NotificationHelper.clearMessage(context, chatId)
-        onDispose { if (com.zoolchat.app.notifications.ConversationVisibility.chatId == chatId) com.zoolchat.app.notifications.ConversationVisibility.chatId = null }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); if (com.zoolchat.app.notifications.ConversationVisibility.chatId == chatId) com.zoolchat.app.notifications.ConversationVisibility.chatId = null }
     }
     LaunchedEffect(chatId) { onLoad() }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             list.animateScrollToItem(messages.lastIndex + if (hasMore) 1 else 0)
-            onMarkRead()
+            if(com.zoolchat.app.notifications.ConversationVisibility.isOpen(chatId)) onMarkRead()
         }
     }
     DisposableEffect(Unit) { onDispose { if (recorder.isRecording) recorder.cancel(); if (typingSent) onTypingChanged(false) } }

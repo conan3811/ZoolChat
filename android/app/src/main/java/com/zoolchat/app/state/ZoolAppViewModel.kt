@@ -78,7 +78,7 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
                 val user = obj.getJSONObject("user")
                 _currentUser.value = CurrentUser(
                     user.getString("id"), user.getString("displayName"),
-                    user.optString("username").takeIf { it.isNotBlank() },
+                    user.optString("username").takeIf { it.isNotBlank() && it != "null" },
                     user.optString("phoneE164").takeIf { it.isNotBlank() },
                     user.optString("photoUrl").takeIf { it.isNotBlank() },
                 )
@@ -103,7 +103,7 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
                 val user = obj.getJSONObject("user")
                 _currentUser.value = CurrentUser(
                     user.getString("id"), user.getString("displayName"),
-                    user.optString("username").takeIf { it.isNotBlank() },
+                    user.optString("username").takeIf { it.isNotBlank() && it != "null" },
                     user.optString("phoneE164").takeIf { it.isNotBlank() },
                     user.optString("photoUrl").takeIf { it.isNotBlank() },
                 )

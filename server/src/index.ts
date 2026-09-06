@@ -16,6 +16,7 @@ import { pool, tx } from './db.js';
 import { requireAuth } from './auth.js';
 import { createSession, hashPassword, revokeRefreshToken, rotateRefreshToken, verifyPassword, resolveAccessToken } from './freeAuth.js';
 import { deleteFirebaseUser, sendData, verifyFirebaseToken } from './firebase.js';
+import { installEmailRecovery } from './emailRecovery.js';
 import { installAdmin } from './admin.js';
 
 const app = express();
@@ -78,6 +79,7 @@ const upload = multer({
 });
 
 const sockets = new Map<string, Set<WebSocket>>();
+installEmailRecovery(app, id => { for(const socket of sockets.get(id) ?? []) socket.close(4001, 'session_revoked'); sockets.delete(id); });
 function emitTo(userId: string, event: unknown) {
   for (const socket of sockets.get(userId) ?? []) if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
 }
@@ -128,7 +130,7 @@ function newMeetingCode() {
   return `${part(3)}-${part(4)}-${part(3)}`;
 }
 function userJson(r: any) {
-  return { id: r.id, displayName: r.display_name, username: r.username ?? null, email: r.email ?? null, phoneE164: r.phone_e164 ?? null, photoUrl: r.photo_url ?? null, about: r.about ?? '' };
+  return { id: r.id, displayName: r.display_name, username: r.username ?? null, email: r.email ?? null, emailVerified: Boolean(r.email_verified_at), phoneE164: r.phone_e164 ?? null, photoUrl: r.photo_url ?? null, about: r.about ?? '' };
 }
 function mediaJson(r: any) {
   if (!r?.media_id) return null;
@@ -179,17 +181,17 @@ app.post('/api/auth/register', authRateLimit, async (req,res)=>{
   if(process.env.FREE_AUTH_ENABLED==='false') return res.status(404).json({error:'free_auth_disabled'});
   const parsed=z.object({
     email:z.string().trim().email().max(254),
-    username:z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/),
+    username:z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).optional(),
     password:z.string().min(8).max(128),
     phoneE164:z.string().regex(/^\+[1-9]\d{5,14}$/),
     deviceName:z.string().trim().max(100).optional(),
   }).safeParse(req.body);
   if(!parsed.success) return res.status(400).json({error:'invalid_request'});
-  const b=parsed.data; const username=b.username.toLowerCase(); const email=b.email.toLowerCase();
+  const b=parsed.data; const username=b.username?.toLowerCase() ?? null; const email=b.email.toLowerCase();
   try{
     const result=await tx(async c=>{
       const discoveryHash=sha256Hex(b.phoneE164);
-      const user=await c.query(`INSERT INTO users(username,email,phone_e164,phone_discovery_hash,display_name) VALUES($1,$2,$3,$4,$5) RETURNING *`,[username,email,b.phoneE164,discoveryHash,username]);
+      const user=await c.query(`INSERT INTO users(username,email,phone_e164,phone_discovery_hash,display_name) VALUES($1,$2,$3,$4,$5) RETURNING *`,[username,email,b.phoneE164,discoveryHash,username ?? "ZoolChat"]);
       const passwordHash=await hashPassword(b.password);
       await c.query(`INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)`,[user.rows[0].id,passwordHash]);
       const recoveryCode=newRecoveryCode();
@@ -214,7 +216,7 @@ app.post('/api/auth/login', authRateLimit, async (req,res)=>{
   const parsed=z.object({identifier:z.string().trim().min(3).max(254),password:z.string().min(8).max(128),deviceName:z.string().trim().max(100).optional()}).safeParse(req.body);
   if(!parsed.success) return res.status(400).json({error:'invalid_request'});
   const b=parsed.data; const identifier=b.identifier.replace(/^@/,'').toLowerCase();
-  const r=await pool.query(`SELECT u.*,uc.password_hash FROM users u JOIN user_credentials uc ON uc.user_id=u.id WHERE lower(u.username)=lower($1) OR lower(u.email)=lower($1) LIMIT 1`,[identifier]);
+  const r=await pool.query(`SELECT u.*,uc.password_hash FROM users u JOIN user_credentials uc ON uc.user_id=u.id WHERE lower(u.username)=lower($1) OR lower(u.email)=lower($1) OR u.phone_e164=$1 LIMIT 1`,[identifier]);
   if(!r.rowCount || !(await verifyPassword(b.password,r.rows[0].password_hash))) return res.status(401).json({error:'invalid_credentials'});
   if(r.rows[0].account_status==='suspended') return res.status(403).json({error:'account_suspended'});
   const session=await createSession(r.rows[0].id,b.deviceName);

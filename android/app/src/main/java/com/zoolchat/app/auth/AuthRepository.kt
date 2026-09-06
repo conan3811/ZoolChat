@@ -123,7 +123,8 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
             "username_taken" -> "اسم المستخدم مستخدم بالفعل"
             "email_in_use" -> "البريد الإلكتروني مستخدم بالفعل"
             "phone_in_use" -> "رقم الجوال مستخدم بالفعل"
-            "invalid_credentials" -> "البريد الإلكتروني/اسم المستخدم أو كلمة المرور غير صحيحة"
+            "invalid_credentials" -> "رقم الجوال أو كلمة المرور غير صحيحة"
+            "email_delivery_unavailable" -> "استرداد البريد غير متاح حالياً. حاول لاحقاً."
             "invalid_request" -> "تحقق من البيانات المدخلة"
             "invalid_or_expired_refresh_token" -> "انتهت الجلسة. سجّل الدخول مرة أخرى"
             "invalid_recovery_code" -> "اسم المستخدم أو رمز الاسترداد غير صحيح"
@@ -137,8 +138,8 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
         sessionStore.accessTokenExpiresAtMs = runCatching { Instant.parse(o.getString("accessExpiresAt")).toEpochMilli() }.getOrDefault(System.currentTimeMillis() + 55*60_000)
         val user = o.optJSONObject("user")
         user?.optString("id")?.takeIf { it.isNotBlank() && it != "null" }?.let { sessionStore.currentUserId = it }
-        val username = user?.optString("username")?.takeIf { it.isNotBlank() } ?: fallbackUsername
-        if (!username.isNullOrBlank()) sessionStore.accountUsername = username.lowercase()
+        val username = user?.optString("username")?.takeIf { it.isNotBlank() && it != "null" } ?: fallbackUsername
+        sessionStore.accountUsername = username?.lowercase().orEmpty()
         user?.optString("displayName")?.takeIf { it.isNotBlank() }?.let { sessionStore.localDisplayName = it }
     }
 
@@ -150,23 +151,18 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
         return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
     }
 
-    suspend fun registerFree(email: String, username: String, password: String, phone: String): Result<String> = runCatching {
-        val e = email.trim().lowercase()
-        val u = username.trim().removePrefix("@").lowercase()
-        require(Patterns.EMAIL_ADDRESS.matcher(e).matches() && e.length <= 254) { "البريد الإلكتروني غير صالح" }
-        require(Regex("^[A-Za-z0-9_.]{3,32}$").matches(u)) { "اسم المستخدم 3–32 حرفاً ويقبل الحروف والأرقام و . _ فقط" }
+    suspend fun registerAccount(email: String, password: String, phone: String): Result<Unit> = runCatching {
+        val e=email.trim().lowercase()
+        require(Patterns.EMAIL_ADDRESS.matcher(e).matches() && e.length<=254) { "البريد الإلكتروني غير صالح" }
         require(password.length in 8..128) { "كلمة المرور يجب أن تكون 8 أحرف على الأقل" }
-        require(phone.trim().isNotBlank()) { "رقم الجوال مطلوب" }
-        val phoneE164 = normalizePhone(phone)
-        val body = JSONObject()
-            .put("email", e)
-            .put("username", u)
-            .put("password", password)
-            .put("phoneE164", phoneE164)
-            .put("deviceName", deviceName())
-        val response = authPost("/api/auth/register", body)
-        saveSession(response, u)
-        response.getString("recoveryCode")
+        val response=authPost("/api/auth/register",JSONObject().put("email",e).put("password",password).put("phoneE164",normalizePhone(phone)).put("deviceName",deviceName()))
+        saveSession(response)
+    }
+    suspend fun requestPasswordCode(email: String): Result<Unit> = runCatching {
+        authPost("/api/auth/password/request",JSONObject().put("email",email.trim().lowercase())); Unit
+    }
+    suspend fun resetPassword(email:String,code:String,password:String): Result<Unit> = runCatching {
+        authPost("/api/auth/password/reset",JSONObject().put("email",email.trim().lowercase()).put("code",code).put("newPassword",password)); Unit
     }
 
     suspend fun recoverFree(username: String, recoveryCode: String, newPassword: String): Result<String> = runCatching {
@@ -179,11 +175,11 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
     }
 
     suspend fun loginFree(identifier: String, password: String): Result<Unit> = runCatching {
-        val id = identifier.trim().removePrefix("@").lowercase()
-        require(id.length >= 3) { "أدخل البريد الإلكتروني أو اسم المستخدم" }
+        val id = normalizePhone(identifier)
+        require(id.length >= 3) { "أدخل رقم الجوال" }
         require(password.length >= 8) { "كلمة المرور غير صحيحة" }
         val o = authPost("/api/auth/login", JSONObject().put("identifier", id).put("password", password).put("deviceName", deviceName()))
-        saveSession(o, id.takeUnless { it.contains('@') })
+        saveSession(o)
     }
 
     suspend fun testBackend(): Result<String> = runCatching { withContext(Dispatchers.IO) {
