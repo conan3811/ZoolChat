@@ -247,7 +247,7 @@ private fun ProductionNav(
                 )
             }
             composable("profile"){
-                ProfileScreen(
+                SettingsHubV032(
                     themeMode=themeMode,
                     onThemeModeChange=onThemeModeChange,
                     appLanguage=appLanguage,
@@ -258,9 +258,18 @@ private fun ProductionNav(
                     onEditProfile={nav.navigate("edit-profile")},
                     onPrivacy={nav.navigate("privacy")},
                     onAccount={nav.navigate("account")},
+                    onChats={nav.navigate("settings-chats")},
+                    onNotifications={nav.navigate("settings-notifications")},
+                    onStorageData={nav.navigate("settings-storage-data")},
+                    onHelp={nav.navigate("settings-help")},
                     onAbout={nav.navigate("about")},
+                    onLogout={vm.logout(onSignedOut)},
                 )
             }
+            composable("settings-chats"){ ChatSettingsScreen { nav.popBackStack() } }
+            composable("settings-notifications"){ NotificationSettingsScreen { nav.popBackStack() } }
+            composable("settings-storage-data"){ StorageDataSettingsScreen { nav.popBackStack() } }
+            composable("settings-help"){ HelpSettingsScreen(onBack={nav.popBackStack()},onAbout={nav.navigate("about")}) }
             composable("account"){
                 AccountScreen(
                     api=vm.api,
