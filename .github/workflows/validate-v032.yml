@@ -2,6 +2,13 @@ name: Validate ZoolChat v0.32 development
 on:
   push:
     branches: [zoolchat-v0.32-development]
+    paths:
+      - 'android/**'
+      - 'server/**'
+      - 'scripts/privacy_scan.py'
+      - 'cloud/API_BASE_URL.txt'
+      - '.github/workflows/validate-v032.yml'
+      - '.github/workflows/build-v032-firebase.yml'
   workflow_dispatch:
 permissions:
   contents: read
