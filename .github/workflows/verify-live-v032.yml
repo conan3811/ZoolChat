@@ -1,0 +1,47 @@
+name: Verify live ZoolChat v0.32
+
+on:
+  push:
+    branches:
+      - zoolchat-v0.27-cloud-beta
+    paths:
+      - .github/workflows/verify-live-v032.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for v0.32 rollout and verify health/status route
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(tr -d '\r\n ' < cloud/API_BASE_URL.txt)"
+          ok=0
+          for attempt in $(seq 1 24); do
+            BODY="$(curl -fsS --max-time 10 "$BASE/health" 2>/dev/null || true)"
+            if BODY="$BODY" node - <<'NODE'
+          const body = process.env.BODY || '';
+          try {
+            const h = JSON.parse(body);
+            if (h.ok === true && h.db === true && String(h.version || '') === '0.32.0-dev') process.exit(0);
+          } catch {}
+          process.exit(1);
+          NODE
+            then
+              CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/api/status" || true)"
+              if [ "$CODE" != "404" ] && [ "$CODE" != "000" ]; then
+                ok=1
+                break
+              fi
+            fi
+            sleep 10
+          done
+          if [ "$ok" != "1" ]; then
+            echo "Live v0.32 verification failed"
+            exit 1
+          fi
+          echo "Live v0.32 health and Status route verified"
