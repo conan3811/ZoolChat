@@ -38,16 +38,16 @@ jobs:
         env:
           POSTGRES_DB: zoolchat_test
           POSTGRES_USER: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_PASSWORD: ci_only_password
         ports: ['5432:5432']
-        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
       mailpit:
         image: axllent/mailpit:v1.30.6
         ports:
           - 1025:1025
           - 8025:8025
     env:
-      DATABASE_URL: postgresql://postgres@localhost:5432/zoolchat_test
+      DATABASE_URL: postgresql://postgres:ci_only_password@localhost:5432/zoolchat_test
       FIREBASE_AUTH_ENABLED: 'false'
       MAIL_HOST: 127.0.0.1
       MAIL_PORT: '1025'
@@ -74,6 +74,7 @@ jobs:
             sleep 1
           done
           node tests/read-state.mjs
+          node tests/auth-flow.mjs
           node tests/smtp-delivery.mjs
           node tests/email-recovery.mjs
           node tests/profile-meeting.mjs
