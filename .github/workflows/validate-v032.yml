@@ -61,6 +61,9 @@ jobs:
       MAIL_FROM: ZoolChat Validation <noreply@example.invalid>
       MAIL_REQUIRE_TLS: 'false'
       EMAIL_RATE_LIMIT_PER_15_MINUTES: '100'
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: ci-test-key
+      LIVEKIT_API_SECRET: ci-test-secret-not-for-production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,11 +86,12 @@ jobs:
           HEALTH_JSON="$(curl --fail --silent http://127.0.0.1:8080/health)"
           HEALTH_JSON="$HEALTH_JSON" node - <<'NODE'
           const h=JSON.parse(process.env.HEALTH_JSON||'{}');
-          if(h.version!=='0.32.0-dev'||h.emailConfigured!==true){console.error('v0.32 backend identity/readiness metadata invalid');process.exit(1)}
-          console.log('PASS: v0.32 backend identity and email readiness metadata');
+          if(h.version!=='0.32.0-dev'||h.emailConfigured!==true||h.livekitConfigured!==true){console.error('v0.32 backend identity/readiness metadata invalid');process.exit(1)}
+          console.log('PASS: v0.32 backend identity and email/LiveKit readiness metadata');
           NODE
           node tests/read-state.mjs
           node tests/auth-flow.mjs
+          node tests/call-lifecycle.mjs
           node tests/smtp-delivery.mjs
           node tests/email-recovery.mjs
           node tests/profile-meeting.mjs
