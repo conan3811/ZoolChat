@@ -108,11 +108,17 @@ jobs:
         run: |
           set -euo pipefail
           ROOT=work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app
-          grep -q 'acceptCall' "$ROOT/state/ZoolAppViewModel.kt"
-          grep -q 'declineCall' "$ROOT/state/ZoolAppViewModel.kt"
-          grep -q 'joinMeeting' "$ROOT/state/ZoolAppViewModel.kt"
-          grep -q 'meeting' "$ROOT/ui/screens/MeetScreen.kt"
-          grep -q 'call' "$ROOT/ui/screens/ProductionCallsScreen.kt"
+          grep -q 'suspend fun acceptCall' "$ROOT/network/ApiClient.kt"
+          grep -q 'suspend fun declineCall' "$ROOT/network/ApiClient.kt"
+          grep -q 'suspend fun joinMeeting' "$ROOT/network/ApiClient.kt"
+          grep -q 'autoAcceptIncoming' "$ROOT/ui/screens/ProductionCallScreen.kt"
+          grep -q 'if (!incoming || autoAcceptIncoming)' "$ROOT/ui/screens/ProductionCallScreen.kt"
+          grep -q 'api.declineCall' "$ROOT/ui/screens/ProductionCallScreen.kt"
+          grep -q 'api.joinMeeting' "$ROOT/ui/screens/MeetScreen.kt"
+          grep -q 'meetingJoinStatus' "$ROOT/ui/screens/MeetScreen.kt"
+          grep -q 'callHistory' "$ROOT/ui/screens/ProductionCallsScreen.kt"
+          grep -q 'call_event' "$ROOT/ui/screens/ProductionChatScreen.kt" || grep -q 'CallEvent' "$ROOT/ui/screens/ProductionChatScreen.kt" || grep -q 'answeredAt' "$ROOT/ui/screens/ProductionChatScreen.kt"
+          grep -q 'incoming_call_accept",false' "$ROOT/notifications/NotificationHelper.kt"
           ! grep -R -n 'محمد.*@mohamed\|@mohamed.*محمد' "$ROOT/ui/screens" || exit 1
 
       - name: Prepare Android build
