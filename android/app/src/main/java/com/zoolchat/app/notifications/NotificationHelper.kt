@@ -21,6 +21,8 @@ object NotificationHelper {
     const val MEET_CHANNEL="zoolchat_meet_v032"
     private const val MESSAGE_GROUP="zoolchat_message_notifications"
 
+    private fun settings(context: Context) = context.getSharedPreferences("zoolchat_user_settings", Context.MODE_PRIVATE)
+
     fun ensureChannels(context:Context) {
         val nm=context.getSystemService(NotificationManager::class.java)
         for ((id,name) in listOf(CHAT_CHANNEL to "Messages", GROUP_CHANNEL to "Group messages", MISSED_CHANNEL to "Missed calls", MEET_CHANNEL to "ZoolMeet invitations")) {
@@ -37,7 +39,10 @@ object NotificationHelper {
 
     fun showMessage(context:Context,title:String,body:String,chatId:String,isGroup:Boolean=false) {
         if(chatId.isBlank() || ConversationVisibility.isOpen(chatId)) { clearMessage(context,chatId); return }
-        if(context.getSharedPreferences("zoolchat_user_settings",0).getLong("mute_until_$chatId",0)>System.currentTimeMillis())return
+        val prefs=settings(context)
+        if(isGroup && !prefs.getBoolean("notif_groups_enabled",true)) return
+        if(!isGroup && !prefs.getBoolean("notif_messages_enabled",true)) return
+        if(prefs.getLong("mute_until_$chatId",0)>System.currentTimeMillis())return
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         val intent=Intent(context,MainActivity::class.java).putExtra("open_chat_id",chatId)
@@ -45,9 +50,13 @@ object NotificationHelper {
         // Transport payloads must never become visible previews.
         val preview=if(body.startsWith("zce") || body.startsWith("zlc")) "رسالة جديدة" else body
         val channel=if(isGroup) GROUP_CHANNEL else CHAT_CHANNEL
+        val highPriority=prefs.getBoolean("notif_high_priority",true)
+        val conversationTones=prefs.getBoolean("notif_conversation_tones",true)
         val n=NotificationCompat.Builder(context,channel).setSmallIcon(R.drawable.ic_stat_zoolchat)
             .setContentTitle(title).setContentText(preview).setAutoCancel(true).setContentIntent(pi)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPriority(if(highPriority) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setSilent(!conversationTones)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE).setGroup(MESSAGE_GROUP).build()
         // One stable notification per conversation prevents duplicate stacks while still alerting
         // for each new message. Android groups multiple active conversations under MESSAGE_GROUP.
@@ -63,12 +72,14 @@ object NotificationHelper {
     }
 
     fun showMissedCall(context:Context,id:String) {
+        if(!settings(context).getBoolean("notif_calls_enabled",true)) return
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MISSED_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolChat").setContentText("مكالمة فائتة").setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
     }
 
     fun showIncomingCall(context:Context,callId:String,caller:String,video:Boolean){
+        if(!settings(context).getBoolean("notif_calls_enabled",true)) return
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         // Full-screen intent only opens the incoming-call screen. It must never accept the call.
