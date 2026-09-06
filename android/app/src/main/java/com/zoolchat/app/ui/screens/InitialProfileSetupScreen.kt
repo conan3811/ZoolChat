@@ -141,7 +141,7 @@ fun InitialProfileSetupScreen(
                 if(busy)CircularProgressIndicator(modifier=Modifier.size(22.dp),strokeWidth=2.dp)
                 else Text(setupLabel("حفظ الصورة والمتابعة","Save photo and continue"))
             }
-            TextButton(enabled=!busy,onClick={finishSetup},modifier=Modifier.padding(top=6.dp)){
+            TextButton(enabled=!busy,onClick={finishSetup()},modifier=Modifier.padding(top=6.dp)){
                 Text(setupLabel("تخطي الآن","Skip for now"))
             }
         }
