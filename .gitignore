@@ -1,0 +1,12 @@
+work/
+node_modules/
+**/build/
+**/.gradle/
+**/local.properties
+**/google-services.json
+**/.env
+*.jks
+*.keystore
+
+**/node_modules
+**/dist/
