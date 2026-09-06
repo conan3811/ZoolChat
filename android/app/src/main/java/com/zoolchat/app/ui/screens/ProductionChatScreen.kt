@@ -140,7 +140,9 @@ fun ProductionChatScreen(
         }
     }
 
-    if(showSecurity){
+    // The current E2EE beta is a direct-chat protocol. Never show its two-party fingerprint
+    // dialog for a group, where there is no single peer identity/key.
+    if(showSecurity && !isGroup){
         LaunchedEffect(showSecurity,peerUserId){ if(peerUserId!=null) peerFingerprint=runCatching{e2ee.peerFingerprint(peerUserId)}.getOrNull() }
         AlertDialog(onDismissRequest={showSecurity=false},title={Text(t("التشفير ورمز الأمان"))},text={Column{Text(t("هذه المحادثة تستخدم E2EE beta مباشر بين الجهازين."));Spacer(Modifier.height(10.dp));Text(t("بصمة جهازك:"),fontWeight=FontWeight.Bold);Text(e2ee.localFingerprint(),style=MaterialTheme.typography.bodySmall);Spacer(Modifier.height(10.dp));Text(t("بصمة الطرف الآخر:"),fontWeight=FontWeight.Bold);Text(peerFingerprint?:t("جاري التحميل…"),style=MaterialTheme.typography.bodySmall);if(peerUserId!=null&&e2ee.peerKeyChanged(peerUserId)){Spacer(Modifier.height(10.dp));Text(t("⚠ تغيّر مفتاح الطرف الآخر. تحقق من البصمة قبل متابعة المحادثة الحساسة."),color=MaterialTheme.colorScheme.error)}}},confirmButton={TextButton(onClick={peerUserId?.let{e2ee.acknowledgePeerKey(it)};showSecurity=false}){Text(t("تم"))}})
     }
@@ -169,17 +171,28 @@ fun ProductionChatScreen(
             Box {
                 IconButton(onClick={showMore=true}) { Icon(Icons.Rounded.MoreVert,"المزيد",tint=MaterialTheme.colorScheme.onSurface) }
                 DropdownMenu(expanded=showMore,onDismissRequest={showMore=false},modifier=Modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
-                    if (isGroup) ChatMenuItem(Icons.Rounded.Group,t("معلومات المجموعة")) { showMore=false; onOpenGroupInfo() }
+                    if (isGroup) {
+                        ChatMenuItem(Icons.Rounded.Group,t("معلومات المجموعة")) { showMore=false; onOpenGroupInfo() }
+                    }
                     ChatMenuItem(Icons.Rounded.Search,t("بحث")) { showMore=false; searchMode=true }
-                    ChatMenuItem(Icons.Rounded.PermMedia,t("الوسائط والروابط والمستندات")) { showMore=false }
-                    ChatMenuItem(Icons.Rounded.NotificationsOff,t("كتم الإشعارات")) { showMore=false }
-                    ChatMenuItem(Icons.Rounded.Timer,t("الرسائل المختفية")) { showMore=false }
-                    ChatMenuItem(Icons.Rounded.VerifiedUser,t("التشفير ورمز الأمان")) { showMore=false; showSecurity=true }
-                    HorizontalDivider(color=MaterialTheme.colorScheme.onSurface.copy(alpha=.15f))
-                    ChatMenuItem(Icons.Rounded.Report,t("إبلاغ")) { showMore=false }
-                    ChatMenuItem(Icons.Rounded.Block,t("حظر")) { showMore=false }
-                    ChatMenuItem(Icons.Rounded.DeleteSweep,t("مسح الدردشة")) { showMore=false }
-                    ChatMenuItem(Icons.Rounded.Share,t("تصدير الدردشة")) { showMore=false }
+                    ChatMenuItem(Icons.Rounded.PermMedia,t("الوسائط والروابط والمستندات")) {
+                        showMore=false
+                        if(isGroup) onOpenGroupInfo() else onOpenProfile()
+                    }
+                    ChatMenuItem(Icons.Rounded.NotificationsOff,t("كتم الإشعارات")) {
+                        showMore=false
+                        if(isGroup) onOpenGroupInfo() else onOpenProfile()
+                    }
+                    if (isGroup) {
+                        ChatMenuItem(Icons.Rounded.Timer,t("الرسائل المختفية")) { showMore=false; onOpenGroupInfo() }
+                        HorizontalDivider(color=MaterialTheme.colorScheme.onSurface.copy(alpha=.15f))
+                        ChatMenuItem(Icons.Rounded.Report,t("إبلاغ")) { showMore=false; onOpenGroupInfo() }
+                    } else {
+                        ChatMenuItem(Icons.Rounded.VerifiedUser,t("التشفير ورمز الأمان")) { showMore=false; showSecurity=true }
+                        HorizontalDivider(color=MaterialTheme.colorScheme.onSurface.copy(alpha=.15f))
+                        ChatMenuItem(Icons.Rounded.Report,t("إبلاغ")) { showMore=false; onOpenProfile() }
+                        ChatMenuItem(Icons.Rounded.Block,t("حظر")) { showMore=false; onOpenProfile() }
+                    }
                 }
             }
         }
@@ -299,7 +312,6 @@ private fun Receipt(status:String){
         else->Text("✓",color=MaterialTheme.colorScheme.onSurface.copy(.72f),style=MaterialTheme.typography.labelSmall)
     }
 }
-
 
 @Composable
 private fun CallEventBubble(m: RemoteMessage, mine: Boolean) {
