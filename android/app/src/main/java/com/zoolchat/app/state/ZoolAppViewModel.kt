@@ -20,7 +20,6 @@ import com.zoolchat.app.data.RemoteChat
 import com.zoolchat.app.data.RemoteMessage
 import com.zoolchat.app.data.RemotePresence
 import com.zoolchat.app.network.ApiClient
-import com.zoolchat.app.realtime.RealtimeClient
 import com.zoolchat.app.realtime.RealtimeEventBus
 import com.zoolchat.app.realtime.RealtimeForegroundService
 import com.zoolchat.app.sync.MessageSyncRepository
@@ -29,6 +28,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
     val session = SessionStore(app)
@@ -309,6 +310,14 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private suspend fun currentFcmToken(): String? {
+        if (FirebaseApp.getApps(getApplication()).isEmpty()) return null
+        return suspendCoroutine { continuation ->
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                continuation.resume(if (task.isSuccessful) task.result else null)
+            }
+        }
+    }
 
     private suspend fun clearSignedInState(clearCryptoIdentity: Boolean) {
         RealtimeForegroundService.stop(getApplication())
@@ -330,6 +339,7 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun logout(onDone: () -> Unit) {
         viewModelScope.launch {
+            runCatching { currentFcmToken()?.let { api.revokeFcm(it) } }
             runCatching { auth.signOut() }
             clearSignedInState(clearCryptoIdentity = false)
             onDone()
