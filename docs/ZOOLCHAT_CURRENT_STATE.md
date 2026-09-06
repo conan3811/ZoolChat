@@ -50,7 +50,7 @@ Current admin functionality includes:
 - LiveKit is active.
 - A Firebase-ready v0.30 APK was previously produced in chat, but do not assume old sandbox artifact links persist into a new conversation; rebuild from project sources when needed.
 
-## ZoolChat v0.32 — 12 primary requirements
+## ZoolChat v0.32 — 13 primary requirements
 
 ### 1. Adaptive Android UI
 Make the app fit every phone automatically using real system insets and available screen area.
@@ -240,8 +240,86 @@ Release acceptance test must verify both paths on a real device:
 1. valid Login -> Messages/Chats opens automatically
 2. valid new Registration -> success feedback -> Messages/Chats opens automatically
 
+### 13. WhatsApp-style contact profile and group-member quick actions
+Implement contact/profile access and group-member interactions inspired by the current WhatsApp Android interaction model.
+
+#### A. Individual chat: tap name/avatar -> contact profile/info
+While an individual conversation is open, tapping the person's name or profile image in the top app bar must open a dedicated contact/profile information screen.
+
+The screen should include, subject to the other user's privacy settings:
+- large profile photo
+- display name
+- username if configured
+- mobile number only when product/privacy rules allow it
+- About/bio text if implemented
+- online / last-seen state only when allowed by privacy settings
+
+Provide quick actions near the top:
+- Message / return to chat
+- Voice call
+- Video call
+- Search messages in this conversation
+
+Provide a shared-content section similar to WhatsApp:
+- `Media, links and documents`
+- preview recent shared media
+- open a full view separated/filterable as Photos/Videos, Links, and Documents
+
+Provide chat controls/information:
+- Notifications
+- Mute notifications with useful durations such as 8 hours, 1 week, or Always
+- Starred messages when supported
+- Disappearing messages when supported
+- Encryption/security information and verification entry when ZoolChat's encryption implementation supports a user-verifiable identity/security view
+- groups in common when available and useful
+- Block user
+- Report user
+
+Do not expose private email, mobile number, last-seen, profile photo, or other profile details contrary to that user's privacy settings.
+
+#### B. Group chat: tap participant -> compact member bottom sheet
+In a group conversation, tapping a participant's profile image/name/message sender identity should open a small modern bottom sheet/card rather than immediately leaving the group.
+
+The compact member card should show:
+- profile photo
+- display name
+- username or other safe identifying detail where appropriate
+- relevant membership/admin badge
+
+Quick actions should include:
+- `Message privately` / `إرسال رسالة خاصة` -> open a direct 1:1 chat with that member
+- `Voice call`
+- `Video call`
+- `View profile` / `عرض الملف الشخصي` -> open the full contact/profile screen described above
+
+For a person not already saved/known as a contact, optionally show an appropriate Add/Save contact action if the Android/contact-permission design supports it.
+
+If the current user is a group admin, the same member sheet may additionally show role-management actions only when authorized, such as:
+- Make group admin / promote
+- Dismiss as admin where applicable
+- Remove from group
+
+Normal members must never see or invoke admin-only actions.
+
+Tapping the current user's own identity in a group should not offer meaningless actions such as messaging or calling themselves; show their own profile or relevant self/group options instead.
+
+#### C. Group info page
+Tapping the group name in the chat header should open a full Group Info screen inspired by WhatsApp's current layout, including:
+- group icon and name
+- description if supported
+- shared Media / Links / Documents
+- notifications / mute controls
+- participant list with admin badges
+- search participants
+- group settings/actions based on user role
+- disappearing-message/chat-privacy options when supported
+- leave group
+- report group where applicable
+
+Release testing must confirm that individual profile information and group member actions obey privacy, group roles, and authorization rules and do not leak registration email/phone details that are not intended to be public.
+
 ## Additional agreed improvements
-These are considered part of implementing the 12 requirements correctly:
+These are considered part of implementing the 13 requirements correctly:
 - email verification for recovery/email changes
 - one-time recovery code hashing, expiry and rate limiting
 - notification channels and Android 13+ permission handling
@@ -252,6 +330,7 @@ These are considered part of implementing the 12 requirements correctly:
 - two-device real-world testing across foreground/background/locked-screen scenarios
 - Wi-Fi <-> mobile-data call/message testing where practical
 - authentication success must update the app navigation/session state immediately, without requiring restart or manual refresh
+- profile/contact and group-member sheets must enforce server-side authorization as well as client-side UI visibility
 
 ## Privacy note
 Do not include any personal phone number or personal email from previous chats in source code, placeholders, screenshots, docs, logs, test fixtures, or release artifacts.
