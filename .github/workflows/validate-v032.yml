@@ -73,6 +73,12 @@ jobs:
             if curl --fail --silent http://127.0.0.1:8080/health > /dev/null; then break; fi
             sleep 1
           done
+          HEALTH_JSON="$(curl --fail --silent http://127.0.0.1:8080/health)"
+          HEALTH_JSON="$HEALTH_JSON" node - <<'NODE'
+          const h=JSON.parse(process.env.HEALTH_JSON||'{}');
+          if(h.version!=='0.32.0-dev'||h.emailConfigured!==true){console.error('v0.32 backend identity/readiness metadata invalid');process.exit(1)}
+          console.log('PASS: v0.32 backend identity and email readiness metadata');
+          NODE
           node tests/read-state.mjs
           node tests/auth-flow.mjs
           node tests/smtp-delivery.mjs
