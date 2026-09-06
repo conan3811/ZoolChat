@@ -103,28 +103,42 @@ jobs:
           echo "13b4886fecfa484ee09051b059c62f0880ca4e1bb24fcc9f6a68081504ee65f8  work/v030.tar.gz" | sha256sum -c -
           tar -xzf work/v030.tar.gz -C work/ZoolChat_v0_24
 
-      - name: Apply v0.30 Kotlin syntax corrections
+      - name: Apply v0.30 Kotlin corrections
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           root = Path("work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app")
+
+          # The group-create route had one extra closing brace. It closed NavHost early,
+          # making every following composable() look unresolved and also made the real
+          # function-closing brace at the bottom look like a syntax error.
           zool = root / "ZoolChatApp.kt"
           s = zool.read_text()
-          old = '        }\n    }\n}\n\n@Composable\nprivate fun ZoolBottomBar'
-          new = '        }\n    }\n\n@Composable\nprivate fun ZoolBottomBar'
+          old = 'composable("group-create"){GroupCreateScreen(vm.api,contacts,searchResults,{vm.searchUsers(it)},{nav.popBackStack()}){id->vm.refreshChats();nav.navigate("prodchat/$id"){popUpTo("chats")}}}}'
+          new = 'composable("group-create"){GroupCreateScreen(vm.api,contacts,searchResults,{vm.searchUsers(it)},{nav.popBackStack()}){id->vm.refreshChats();nav.navigate("prodchat/$id"){popUpTo("chats")}}}'
           if old not in s:
-              raise SystemExit("ZoolChatApp syntax-fix anchor not found")
+              raise SystemExit("ZoolChatApp group-create route anchor not found")
           zool.write_text(s.replace(old, new, 1))
 
+          # MeetCreatedLater was missing the Column-closing brace.
           meet = root / "ui/screens/MeetScreen.kt"
           s = meet.read_text()
           old = 'TextButton(onClick=onDone){Text(t("تم"))}}\n\n@Composable private fun MeetRoom'
-          new = 'TextButton(onClick=onDone){Text(t("تم"))}}}\n\n@Composable private fun MeetRoom'
+          new = 'TextButton(onClick=onDone){Text(t("تم"))}}}\n\n@OptIn(ExperimentalMaterial3Api::class)\n@Composable private fun MeetRoom'
           if old not in s:
-              raise SystemExit("MeetScreen syntax-fix anchor not found")
+              raise SystemExit("MeetScreen syntax/opt-in anchor not found")
           meet.write_text(s.replace(old, new, 1))
+
+          # Kotlin does not permit defaults to be repeated on overriding methods.
+          engine = root / "calling/CallEngine.kt"
+          s = engine.read_text()
+          old = 'override suspend fun setScreenShareEnabled(enabled: Boolean, permissionData: Intent? = null) = Unit'
+          new = 'override suspend fun setScreenShareEnabled(enabled: Boolean, permissionData: Intent?) = Unit'
+          if old not in s:
+              raise SystemExit("CallEngine override anchor not found")
+          engine.write_text(s.replace(old, new, 1))
           PY
 
       - name: Validate v0.30 behavior wiring
@@ -191,14 +205,12 @@ jobs:
           sed -i 's/[[:space:]]android:usesCleartextTraffic="true"//g' "$DEBUG_MANIFEST"
 
           ROOT=work/ZoolChat_v0_24/android/app/src/main/java/com/zoolchat/app
-          echo '=== ZoolChatApp imports/routes ==='
-          nl -ba "$ROOT/ZoolChatApp.kt" | sed -n '1,55p;120,235p'
-          echo '=== CallEngine ==='
-          nl -ba "$ROOT/calling/CallEngine.kt" | sed -n '1,90p'
-          echo '=== MessageSyncRepository ==='
-          nl -ba "$ROOT/sync/MessageSyncRepository.kt" | sed -n '80,155p'
-          echo '=== MeetScreen relevant section ==='
-          nl -ba "$ROOT/ui/screens/MeetScreen.kt" | sed -n '230,280p'
+          echo '=== ZoolChatApp route scope ==='
+          nl -ba "$ROOT/ZoolChatApp.kt" | sed -n '125,235p'
+          echo '=== MessageSyncRepository full diagnostics ==='
+          nl -ba "$ROOT/sync/MessageSyncRepository.kt" | sed -n '1,320p'
+          echo '=== Android dependencies ==='
+          grep -nE 'navigation|compose|room|work-runtime' "$APP_BUILD" || true
 
       - uses: actions/setup-java@v5
         with:
