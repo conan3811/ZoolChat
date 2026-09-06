@@ -153,8 +153,8 @@ fun ProductionChatScreen(
             ).chunked(7)
         }
         ModalBottomSheet(onDismissRequest={showEmojiPicker=false}) {
-            Column(Modifier.fillMaxWidth().padding(horizontal=10.dp,bottom=18.dp)) {
-                Text(t("الرموز التعبيرية"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.padding(horizontal=8.dp,bottom=8.dp))
+            Column(Modifier.fillMaxWidth().padding(start=10.dp,end=10.dp,bottom=18.dp)) {
+                Text(t("الرموز التعبيرية"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=8.dp,end=8.dp,bottom=8.dp))
                 emojiRows.forEach { row ->
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {
                         row.forEach { emoji ->
