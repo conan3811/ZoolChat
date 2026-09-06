@@ -1,0 +1,112 @@
+name: Apply v0.32 Android privacy completion
+on: [push]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+      - name: Apply Android privacy UI and notification guard
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          # ApiClient: expose per-account notification preview privacy.
+          p=Path('android/app/src/main/java/com/zoolchat/app/network/ApiClient.kt')
+          s=p.read_text()
+          if 'messagePreviews: Boolean? = null' not in s:
+              s=s.replace(
+                  '        aboutVisibility: String? = null,\n    ): JSONObject = put(',
+                  '        aboutVisibility: String? = null,\n        messagePreviews: Boolean? = null,\n    ): JSONObject = put(',
+                  1,
+              )
+              s=s.replace(
+                  '            aboutVisibility?.let { put("aboutVisibility", it) }\n        },',
+                  '            aboutVisibility?.let { put("aboutVisibility", it) }\n            messagePreviews?.let { put("messagePreviews", it) }\n        },',
+                  1,
+              )
+          if 'messagePreviews: Boolean? = null' not in s or 'put("messagePreviews", it)' not in s:
+              raise SystemExit('ApiClient message preview privacy update failed')
+          p.write_text(s)
+
+          # ProfileScreen: sync photo/about privacy with server and add preview toggle.
+          p=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt')
+          s=p.read_text()
+          state='    var readReceipts by remember { mutableStateOf(prefs.getBoolean("read_receipts", true)) }\n'
+          if 'var messagePreviews by remember' not in s:
+              if state not in s: raise SystemExit('PrivacyScreen state anchor missing')
+              s=s.replace(state,state+'    var messagePreviews by remember { mutableStateOf(prefs.getBoolean("message_previews", true)) }\n    fun localVisibility(value: String) = when (value) { "everyone" -> "الجميع"; "nobody" -> "لا أحد"; else -> "جهات اتصالي" }\n    fun serverVisibility(value: String) = when (value) { "الجميع" -> "everyone"; "لا أحد" -> "nobody"; else -> "contacts" }\n',1)
+
+          load='            val serverOnline = remote.optBoolean("showOnline", true)\n'
+          if 'remote.optString("profilePhotoVisibility"' not in s:
+              if load not in s: raise SystemExit('PrivacyScreen remote load anchor missing')
+              s=s.replace(load,load+'            profilePhoto = localVisibility(remote.optString("profilePhotoVisibility", "contacts"))\n            aboutVisibility = localVisibility(remote.optString("aboutVisibility", "contacts"))\n            messagePreviews = remote.optBoolean("messagePreviews", true)\n',1)
+
+          prefs_old='                .putString("online_visibility", online)\n                .apply()'
+          prefs_new='                .putString("online_visibility", online)\n                .putString("profile_photo_visibility", profilePhoto)\n                .putString("about_visibility", aboutVisibility)\n                .putBoolean("message_previews", messagePreviews)\n                .apply()'
+          if '.putBoolean("message_previews", messagePreviews)' not in s:
+              if prefs_old not in s: raise SystemExit('PrivacyScreen preference anchor missing')
+              s=s.replace(prefs_old,prefs_new,1)
+
+          photo_old='                                    "photo" -> { profilePhoto = option; prefs.edit().putString("profile_photo_visibility", option).apply() }\n                                    else -> { aboutVisibility = option; prefs.edit().putString("about_visibility", option).apply() }'
+          photo_new='''                                    "photo" -> {
+                                        profilePhoto = option
+                                        prefs.edit().putString("profile_photo_visibility", option).apply()
+                                        scope.launch { runCatching { api.updatePrivacy(profilePhotoVisibility = serverVisibility(option)) }.onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") } }
+                                    }
+                                    else -> {
+                                        aboutVisibility = option
+                                        prefs.edit().putString("about_visibility", option).apply()
+                                        scope.launch { runCatching { api.updatePrivacy(aboutVisibility = serverVisibility(option)) }.onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") } }
+                                    }'''
+          if 'api.updatePrivacy(profilePhotoVisibility = serverVisibility(option))' not in s:
+              if photo_old not in s: raise SystemExit('PrivacyScreen photo/about action anchor missing')
+              s=s.replace(photo_old,photo_new,1)
+
+          error_anchor='        privacyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }\n'
+          preview_block='''        ToggleSetting(
+            icon = Icons.Rounded.Notifications,
+            title = t("معاينة الرسائل في الإشعارات"),
+            subtitle = t("عند إيقافها ستظهر إشعارات الرسائل بدون محتوى الرسالة."),
+            checked = messagePreviews,
+            onCheckedChange = {
+                messagePreviews = it
+                prefs.edit().putBoolean("message_previews", it).apply()
+                scope.launch {
+                    runCatching { api.updatePrivacy(messagePreviews = it) }
+                        .onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") }
+                }
+            },
+        )
+'''
+          if 'title = t("معاينة الرسائل في الإشعارات")' not in s:
+              if error_anchor not in s: raise SystemExit('PrivacyScreen preview toggle anchor missing')
+              s=s.replace(error_anchor,preview_block+error_anchor,1)
+
+          for marker in ['messagePreviews by remember','profilePhotoVisibility = serverVisibility(option)','aboutVisibility = serverVisibility(option)','updatePrivacy(messagePreviews = it)']:
+              if marker not in s: raise SystemExit(f'PrivacyScreen completion marker missing: {marker}')
+          p.write_text(s)
+
+          # Local defense in depth in case a detailed body arrives from any old backend.
+          p=Path('android/app/src/main/java/com/zoolchat/app/notifications/NotificationHelper.kt')
+          s=p.read_text()
+          old='        val preview=if(body.startsWith("zce") || body.startsWith("zlc")) "رسالة جديدة" else body\n'
+          new='        val allowPreview=context.getSharedPreferences("zoolchat_user_settings",0).getBoolean("message_previews",true)\n        val preview=if(!allowPreview || body.startsWith("zce") || body.startsWith("zlc")) "رسالة جديدة" else body\n'
+          if 'val allowPreview=' not in s:
+              if old not in s: raise SystemExit('NotificationHelper preview anchor missing')
+              s=s.replace(old,new,1)
+          p.write_text(s)
+      - name: Commit Android privacy completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/apply-v032-android-privacy.yml
+          git config user.name "ZoolChat CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add android
+          git commit -m "Complete v0.32 Android privacy controls"
+          git push origin HEAD:zoolchat-v0.32-development
