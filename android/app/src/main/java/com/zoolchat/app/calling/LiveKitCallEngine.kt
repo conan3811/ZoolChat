@@ -11,6 +11,8 @@ import io.livekit.android.e2ee.E2EEOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.track.LocalVideoTrack
+import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import kotlinx.coroutines.*
@@ -24,10 +26,18 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _remoteVideoTrack = MutableStateFlow<VideoTrack?>(null)
     val remoteVideoTrack: StateFlow<VideoTrack?> = _remoteVideoTrack
+    private val _localVideoTrack = MutableStateFlow<LocalVideoTrack?>(null)
+    val localVideoTrack: StateFlow<LocalVideoTrack?> = _localVideoTrack
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
     private val _remoteParticipantPresent = MutableStateFlow(false)
     val remoteParticipantPresent: StateFlow<Boolean> = _remoteParticipantPresent
+
+    private fun refreshLocalCameraTrack() {
+        _localVideoTrack.value = room?.localParticipant
+            ?.getTrackPublication(Track.Source.CAMERA)
+            ?.track as? LocalVideoTrack
+    }
 
     override suspend fun connect(config: ZoolCallConfig): Result<Unit> = runCatching {
         disconnect()
@@ -55,7 +65,7 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
                     is RoomEvent.TrackUnsubscribed -> if (_remoteVideoTrack.value === event.track) _remoteVideoTrack.value = null
                     is RoomEvent.ParticipantConnected -> _remoteParticipantPresent.value = true
                     is RoomEvent.ParticipantDisconnected -> _remoteParticipantPresent.value = newRoom.remoteParticipants.isNotEmpty()
-                    is RoomEvent.Disconnected -> { _connected.value = false; _remoteParticipantPresent.value = false; _remoteVideoTrack.value = null }
+                    is RoomEvent.Disconnected -> { _connected.value = false; _remoteParticipantPresent.value = false; _remoteVideoTrack.value = null; _localVideoTrack.value = null }
                     else -> Unit
                 }
             }
@@ -64,6 +74,7 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
         newRoom.connect(config.serverUrl, config.token)
         check(newRoom.localParticipant.setMicrophoneEnabled(config.startMicrophone)) { "microphone_publish_failed" }
         newRoom.localParticipant.setCameraEnabled(config.startCamera)
+        refreshLocalCameraTrack()
         _connected.value = true
         _remoteParticipantPresent.value = newRoom.remoteParticipants.isNotEmpty()
     }
@@ -75,7 +86,14 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
     }
     fun useAutomaticAudioRoute() { audioHandler?.selectDevice(null) }
     override suspend fun setMicrophoneEnabled(enabled: Boolean) { check(room?.localParticipant?.setMicrophoneEnabled(enabled)==true) { "microphone_publish_failed" } }
-    override suspend fun setCameraEnabled(enabled: Boolean) { room?.localParticipant?.setCameraEnabled(enabled) }
+    override suspend fun setCameraEnabled(enabled: Boolean) {
+        room?.localParticipant?.setCameraEnabled(enabled)
+        refreshLocalCameraTrack()
+    }
+    fun switchCamera() {
+        refreshLocalCameraTrack()
+        _localVideoTrack.value?.switchCamera()
+    }
     override suspend fun setScreenShareEnabled(enabled: Boolean, permissionData: Intent?) {
         val participant = room?.localParticipant ?: return
         if (enabled) {
@@ -88,6 +106,7 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
         eventsJob?.cancel()
         eventsJob = null
         _remoteVideoTrack.value = null
+        _localVideoTrack.value = null
         _connected.value = false
         _remoteParticipantPresent.value = false
         room?.disconnect()
