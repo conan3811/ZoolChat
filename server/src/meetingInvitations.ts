@@ -10,6 +10,36 @@ export function installMeetingInvitations(app:Express,emit:(id:string,event:unkn
  installProfileV032(app);
  installStatusV032(app,emit);
  const limit=rateLimit({windowMs:60_000,limit:20,standardHeaders:'draft-8',legacyHeaders:false});
+
+ async function emitWaitingCount(meetingId:string,hostId:string){
+  const count=await pool.query("SELECT count(*)::int n FROM meeting_participants WHERE meeting_id=$1 AND status='waiting'",[meetingId]);
+  emit(hostId,{type:'meeting.waiting_changed',data:{meetingId,waiting:Number(count.rows[0]?.n??0)}});
+ }
+
+ // v0.32 authoritative admit/deny handlers are registered before the legacy routes. Besides the
+ // decision itself they tell the host client whether anyone is still waiting, which controls the
+ // repeated waiting-room alert without disturbing LiveKit call audio.
+ app.post('/api/meetings/:id/participants/:userId/admit',requireAuth,limit,async(req,res)=>{
+  const id=z.string().uuid().parse(req.params.id),target=z.string().uuid().parse(req.params.userId),uid=req.zoolUser!.id;
+  const m=await pool.query("SELECT host_id FROM meetings WHERE id=$1 AND status='active'",[id]);
+  if(!m.rowCount)return res.status(404).json({error:'meeting_not_found'});
+  if(String(m.rows[0].host_id)!==uid)return res.status(403).json({error:'host_required'});
+  const changed=await pool.query("UPDATE meeting_participants SET status='admitted',admitted_at=now(),joined_at=COALESCE(joined_at,now()),left_at=NULL WHERE meeting_id=$1 AND user_id=$2 AND status='waiting' RETURNING user_id",[id,target]);
+  if(changed.rowCount)emit(target,{type:'meeting.admitted',data:{meetingId:id}});
+  await emitWaitingCount(id,uid);
+  res.json({ok:true});
+ });
+ app.post('/api/meetings/:id/participants/:userId/deny',requireAuth,limit,async(req,res)=>{
+  const id=z.string().uuid().parse(req.params.id),target=z.string().uuid().parse(req.params.userId),uid=req.zoolUser!.id;
+  const m=await pool.query("SELECT host_id FROM meetings WHERE id=$1 AND status='active'",[id]);
+  if(!m.rowCount)return res.status(404).json({error:'meeting_not_found'});
+  if(String(m.rows[0].host_id)!==uid)return res.status(403).json({error:'host_required'});
+  const changed=await pool.query("UPDATE meeting_participants SET status='denied',left_at=now() WHERE meeting_id=$1 AND user_id=$2 AND status='waiting' RETURNING user_id",[id,target]);
+  if(changed.rowCount)emit(target,{type:'meeting.denied',data:{meetingId:id}});
+  await emitWaitingCount(id,uid);
+  res.json({ok:true});
+ });
+
  app.post('/api/meetings/:id/invitations',requireAuth,limit,async(req,res)=>{
   const id=z.string().uuid().parse(req.params.id),uid=req.zoolUser!.id;
   const b=z.object({kind:z.enum(['username','phone','email']),value:z.string().trim().min(3).max(254)}).parse(req.body);
