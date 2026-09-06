@@ -1,9 +1,6 @@
 name: Build ZoolChat v0.32 Firebase APK
 on:
   workflow_dispatch:
-  push:
-    branches: [zoolchat-v0.32-development]
-    paths: [.github/workflows/build-v032-firebase.yml]
 permissions:
   contents: read
 jobs:
