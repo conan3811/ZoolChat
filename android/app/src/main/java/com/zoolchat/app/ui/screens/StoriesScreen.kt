@@ -114,7 +114,7 @@ fun StoriesScreen(
                 )
             }
             if(others.isEmpty()&&!busy)item{Text(s("لا توجد حالات متاحة الآن","No status updates available"),modifier=Modifier.padding(horizontal=16.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
-            item{HorizontalDivider(Modifier.padding(top=12.dp));Text(s("القنوات","Channels"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.padding(16.dp));Text(s("القنوات منفصلة عن الحالات داخل ZoolChat.","Channels are separate from Status in ZoolChat."),modifier=Modifier.padding(horizontal=16.dp,bottom=24.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
+            item{HorizontalDivider(Modifier.padding(top=12.dp));Text(s("القنوات","Channels"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.padding(16.dp));Text(s("القنوات منفصلة عن الحالات داخل ZoolChat.","Channels are separate from Status in ZoolChat."),modifier=Modifier.padding(start=16.dp,end=16.dp,bottom=24.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
         }
         error?.let{Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(12.dp))}
     }
@@ -298,7 +298,7 @@ private fun StatusViewer(
                         if(status.optBoolean("canReshare"))IconButton(onClick={scope.launch{runCatching{api.post("/api/status/$id/reshare")}.onSuccess{note=s("تمت إعادة المشاركة","Status reshared")}}}){Icon(Icons.Rounded.IosShare,null,tint=Color.White)}
                     }
                 }
-                note?.let{Text(it,color=Color.White.copy(.8f),modifier=Modifier.padding(horizontal=16.dp,bottom=6.dp))}
+                note?.let{Text(it,color=Color.White.copy(.8f),modifier=Modifier.padding(start=16.dp,end=16.dp,bottom=6.dp))}
             }
         }
     }
