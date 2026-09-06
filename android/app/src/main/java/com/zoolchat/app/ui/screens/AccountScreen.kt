@@ -2,7 +2,6 @@ package com.zoolchat.app.ui.screens
 
 import com.zoolchat.app.ui.i18n.t
 
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -40,12 +39,13 @@ fun AccountScreen(
         val payload=exporting; if(uri!=null&&payload!=null) runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use{it.write(payload)} }
         exporting=null
     }
-    fun refreshDevices(){scope.launch{runCatching{api.devices()}.onSuccess{arr->devices=(0 until arr.length()).map{i->val o=arr.getJSONObject(i);DeviceRow(o.getString("id"),o.optString("deviceName","Android"),o.optString("lastSeenAt"))}}.onFailure{error=it.message}}}
+    fun safeError(){error=t("تعذر إكمال الطلب")}
+    fun refreshDevices(){scope.launch{runCatching{api.devices()}.onSuccess{arr->devices=(0 until arr.length()).map{i->val o=arr.getJSONObject(i);DeviceRow(o.getString("id"),o.optString("deviceName","Android"),o.optString("lastSeenAt"))}}.onFailure{safeError()}}}
     LaunchedEffect(Unit){refreshDevices()}
 
     Column(Modifier.fillMaxSize().padding(horizontal=14.dp)){
         Row(Modifier.fillMaxWidth().heightIn(min=56.dp),verticalAlignment=Alignment.CenterVertically){
-            IconButton(onClick=onBack){Icon(Icons.Rounded.ArrowBack,"رجوع")}
+            IconButton(onClick=onBack){Icon(Icons.Rounded.ArrowBack,t("رجوع"))}
             Text(t("الحساب والأجهزة"),style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
         }
         Text(if(username.isBlank()) t("حساب ZoolChat") else "@$username",color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=6.dp))
@@ -57,12 +57,12 @@ fun AccountScreen(
                     headlineContent={Text(d.name)},
                     supportingContent={Text(d.lastSeen.ifBlank{t("نشط")})},
                     leadingContent={Icon(Icons.Rounded.PhoneAndroid,null)},
-                    trailingContent={IconButton(onClick={scope.launch{runCatching{api.revokeDevice(d.id)}.onSuccess{refreshDevices()}.onFailure{error=it.message}}}){Icon(Icons.Rounded.LinkOff,"إلغاء ربط الجهاز")}}
+                    trailingContent={IconButton(onClick={scope.launch{runCatching{api.revokeDevice(d.id)}.onSuccess{refreshDevices()}.onFailure{safeError()}}}){Icon(Icons.Rounded.LinkOff,t("إلغاء ربط الجهاز"))}}
                 )
                 HorizontalDivider()
             }
         }
-        Button(onClick={scope.launch{runCatching{api.exportAccount().toString(2)}.onSuccess{exporting=it;createExport.launch("zoolchat-export.json")}.onFailure{error=it.message}}},modifier=Modifier.fillMaxWidth()){
+        Button(onClick={scope.launch{runCatching{api.exportAccount().toString(2)}.onSuccess{exporting=it;createExport.launch("zoolchat-export.json")}.onFailure{safeError()}}},modifier=Modifier.fillMaxWidth()){
             Icon(Icons.Rounded.Download,null);Spacer(Modifier.width(8.dp));Text(t("تصدير بياناتي"))
         }
         OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){
@@ -77,7 +77,7 @@ fun AccountScreen(
     if(showDelete) AlertDialog(
         onDismissRequest={showDelete=false},
         title={Text(t("حذف الحساب نهائياً؟"))},
-        text={Text(t("سيُحذف الحساب والرسائل والبيانات المرتبطة به من خادم ZoolChat. لا يمكن التراجع عن هذه العملية."))},
+        text={Text(t("سيُحذف الحساب والرسائل والبيانات المرتبطة به نهائياً. لا يمكن التراجع عن هذه العملية."))},
         confirmButton={TextButton(onClick={showDelete=false;onDeleteAccount()},colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.error)){Text(t("حذف نهائي"))}},
         dismissButton={TextButton(onClick={showDelete=false}){Text(t("إلغاء"))}},
     )
