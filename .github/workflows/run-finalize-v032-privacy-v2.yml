@@ -1,0 +1,45 @@
+name: Retry v0.32 privacy finalizer
+on: [push]
+permissions:
+  contents: write
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+      - name: Execute privacy finalizer
+        shell: python
+        run: |
+          from pathlib import Path
+          profile=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt')
+          original=profile.read_text()
+          anchor='        privacyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }\n'
+          sentinel='''        /* v032-finalizer-anchor
+        ToggleSetting(
+              icon = Icons.Rounded.DoneAll,
+              title = t("مؤشرات قراءة الرسائل"),
+        */
+'''
+          if anchor not in original: raise SystemExit('privacy UI anchor missing')
+          profile.write_text(original.replace(anchor,sentinel+anchor,1))
+          src=Path('.github/workflows/finalize-v032-privacy.yml').read_text().splitlines()
+          shell_idx=next(i for i,x in enumerate(src) if x.strip()=='shell: python')
+          run_idx=next(i for i in range(shell_idx+1,len(src)) if src[i].strip()=='run: |')
+          end_idx=next(i for i in range(run_idx+1,len(src)) if src[i].startswith('      - name: Commit privacy completion'))
+          code=[line[10:] if line.startswith('          ') else line for line in src[run_idx+1:end_idx]]
+          exec(compile('\n'.join(code)+'\n','v032_privacy_finalizer.py','exec'),{'__name__':'__main__'})
+          updated=profile.read_text()
+          if sentinel not in updated: raise SystemExit('temporary anchor missing after finalizer')
+          profile.write_text(updated.replace(sentinel,'',1))
+      - name: Commit and clean one-shot workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/finalize-v032-privacy.yml .github/workflows/run-finalize-v032-privacy.yml .github/workflows/run-finalize-v032-privacy-v2.yml
+          git config user.name "ZoolChat CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add server android
+          git commit -m "Complete v0.32 profile and notification privacy"
+          git push origin HEAD:zoolchat-v0.32-development
