@@ -1,0 +1,287 @@
+name: Finalize v0.32 privacy
+on: [push]
+permissions:
+  contents: write
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+      - name: Apply server and Android privacy completion
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def between(text, start, end, replacement):
+              a=text.find(start)
+              if a<0: raise SystemExit(f'missing start marker: {start[:80]}')
+              b=text.find(end,a)
+              if b<0: raise SystemExit(f'missing end marker: {end[:80]}')
+              return text[:a]+replacement+text[b:]
+
+          # Add per-account notification preview privacy.
+          Path('server/migrations/013_v032_notification_privacy.sql').write_text("""ALTER TABLE user_privacy_settings
+            ADD COLUMN IF NOT EXISTS message_previews boolean NOT NULL DEFAULT true;
+          """)
+
+          p=Path('server/src/index.ts'); s=p.read_text()
+          old="""async function fcmTokens(userIds: string[]) {
+            if (!userIds.length) return [];
+            const r = await pool.query(`SELECT fcm_token FROM devices WHERE user_id=ANY($1::uuid[]) AND revoked_at IS NULL`, [userIds]);
+            return r.rows.map(x => x.fcm_token);
+          }
+          """
+          new=old+"""async function fcmTargets(userIds: string[]) {
+            if (!userIds.length) return [] as Array<{userId:string,token:string,messagePreviews:boolean}>;
+            const r = await pool.query(`SELECT d.user_id,d.fcm_token,COALESCE(p.message_previews,true) message_previews FROM devices d LEFT JOIN user_privacy_settings p ON p.user_id=d.user_id WHERE d.user_id=ANY($1::uuid[]) AND d.revoked_at IS NULL`,[userIds]);
+            return r.rows.map(x=>({userId:String(x.user_id),token:String(x.fcm_token),messagePreviews:x.message_previews!==false}));
+          }
+          """
+          if old not in s: raise SystemExit('fcm helper marker missing')
+          s=s.replace(old,new,1)
+
+          old="return { id: r.id, displayName: r.display_name, username: r.username ?? null, email: r.email ?? null, emailVerified: Boolean(r.email_verified_at), phoneE164: r.phone_e164 ?? null, photoUrl: r.photo_url ?? null, about: r.about ?? '' };"
+          new="return { id: r.id, displayName: r.display_name, username: r.username ?? null, email: r.email ?? null, emailVerified: Boolean(r.email_verified_at), phoneE164: r.phone_e164 ?? null, photoUrl: r.profile_photo_media_id ? `/api/media/${r.profile_photo_media_id}` : (r.photo_url ?? null), about: r.about ?? '' };"
+          if old not in s: raise SystemExit('userJson marker missing')
+          s=s.replace(old,new,1)
+
+          start="app.put('/api/me', requireAuth, async (req, res) => {"
+          end="app.post('/api/devices/fcm', requireAuth, async (req, res) => {"
+          block="""app.put('/api/me', requireAuth, async (req, res) => {
+            const b = z.object({ displayName: z.string().trim().min(1).max(80).optional(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).nullable().optional(), about: z.string().max(160).optional(), photoUrl: z.string().url().nullable().optional(), photoMediaId: z.string().uuid().nullable().optional() }).parse(req.body);
+            if (b.photoMediaId) {
+              const owned=await pool.query(`SELECT 1 FROM media_assets WHERE id=$1 AND owner_id=$2 AND mime_type LIKE 'image/%'`,[b.photoMediaId,req.zoolUser!.id]);
+              if(!owned.rowCount)return res.status(400).json({error:'invalid_profile_photo'});
+            }
+            let r = await pool.query(`UPDATE users SET display_name=COALESCE($2,display_name),username=COALESCE($3,username),about=COALESCE($4,about),photo_url=COALESCE($5,photo_url),updated_at=now() WHERE id=$1 RETURNING *`, [req.zoolUser!.id, b.displayName ?? null, b.username ?? null, b.about ?? null, b.photoUrl ?? null]);
+            if (b.photoMediaId !== undefined) {
+              r=await pool.query(`UPDATE users SET profile_photo_media_id=$2,photo_url=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[req.zoolUser!.id,b.photoMediaId]);
+            }
+            res.json({ user: userJson(r.rows[0]) });
+          });
+          """
+          s=between(s,start,end,block)
+
+          start="app.post('/api/contacts/discover', discoveryRateLimit, requireAuth, async (req, res) => {"
+          end="app.get('/api/users/search', requireAuth, async (req, res) => {"
+          block="""app.post('/api/contacts/discover', discoveryRateLimit, requireAuth, async (req, res) => {
+            const b = z.object({ phoneHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(10000) }).parse(req.body);
+            if (!b.phoneHashes.length) return res.json({ contacts: [] });
+            const r = await pool.query(`SELECT u.id,u.phone_discovery_hash,u.display_name,u.username,
+              CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$2 AND b.user_id=u.id)) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url
+              FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id
+              WHERE u.phone_discovery_hash=ANY($1::text[]) AND u.id<>$2 AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$2 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$2))`, [b.phoneHashes, req.zoolUser!.id]);
+            res.json({ contacts: r.rows.map(x => ({ userId: x.id, discoveryHash: x.phone_discovery_hash, displayName: x.display_name, username: x.username, photoUrl: x.photo_url })) });
+          });
+          """
+          s=between(s,start,end,block)
+
+          start="app.get('/api/users/search', requireAuth, async (req, res) => {"
+          end="app.put('/api/e2ee/key', requireAuth, async (req,res)=>{"
+          block="""app.get('/api/users/search', requireAuth, async (req, res) => {
+            const q = String(req.query.q ?? '').trim();
+            if (q.length < 3 || q.length > 80) return res.json({ users: [] });
+            const normalizedPhone = /^\\+[1-9]\\d{5,14}$/.test(q) ? q : null;
+            const username = q.replace(/^@/, '').toLowerCase();
+            const r = await pool.query(`SELECT u.id,u.phone_e164,u.display_name,u.username,
+              CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$1 AND b.user_id=u.id)) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url
+              FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id
+              WHERE u.id<>$1 AND ((u.username IS NOT NULL AND lower(u.username) LIKE lower($2) || '%') OR ($3::text IS NOT NULL AND u.phone_e164=$3))
+                AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$1 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$1))
+              ORDER BY CASE WHEN lower(u.username)=lower($2) THEN 0 ELSE 1 END, lower(u.username) ASC NULLS LAST LIMIT 20`, [req.zoolUser!.id, username, normalizedPhone]);
+            res.json({ users: r.rows.map(x => ({ userId:x.id, phoneE164: normalizedPhone && x.phone_e164===normalizedPhone ? normalizedPhone : null, displayName:x.display_name, username:x.username, photoUrl:x.photo_url })) });
+          });
+
+          """
+          s=between(s,start,end,block)
+
+          start="app.get('/api/media/:id', requireAuth, async (req, res) => {"
+          end="app.get('/api/chats', requireAuth, async (req, res) => {"
+          old_media=s[s.find(start):s.find(end,s.find(start))]
+          if not old_media: raise SystemExit('media block missing')
+          # Keep the existing storage/send logic, only strengthen the authorization SELECT.
+          old_query="SELECT ma.* FROM media_assets ma WHERE ma.id=$1 AND (ma.owner_id=$2 OR EXISTS(SELECT 1 FROM messages m JOIN chat_members cm ON cm.chat_id=m.chat_id WHERE m.media_id=ma.id AND cm.user_id=$2))"
+          new_query="""SELECT ma.* FROM media_assets ma WHERE ma.id=$1 AND (
+            ma.owner_id=$2 OR
+            EXISTS(SELECT 1 FROM messages m JOIN chat_members cm ON cm.chat_id=m.chat_id WHERE m.media_id=ma.id AND cm.user_id=$2) OR
+            EXISTS(SELECT 1 FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE u.profile_photo_media_id=ma.id AND u.account_status='active'
+              AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$2 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$2))
+              AND (COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$2 AND b.user_id=u.id))))
+          )"""
+          if old_query not in old_media: raise SystemExit('media auth query marker missing')
+          new_media=old_media.replace(old_query,new_query,1)
+          s=s.replace(old_media,new_media,1)
+
+          old="""  const tokens = await fcmTokens(peerIds); const preview = pushMessagePreviews && !b.encrypted ? (b.type === 'text' ? b.body.slice(0,180) : `📎 ${r.media_name ?? b.type}`) : (b.encrypted ? '🔒 رسالة مشفرة' : 'رسالة جديدة'); await sendData(tokens, { type:'message_new', chatId, senderName:req.zoolUser!.displayName, body:preview });
+          """
+          new="""  const pushTargets=await fcmTargets(peerIds);
+            const detailedPreview=!b.encrypted ? (b.type==='text' ? b.body.slice(0,180) : `📎 ${r.media_name ?? b.type}`) : 'رسالة جديدة';
+            const detailedTokens=pushMessagePreviews&&!b.encrypted ? pushTargets.filter(x=>x.messagePreviews).map(x=>x.token) : [];
+            const genericTokens=pushTargets.filter(x=>!detailedTokens.includes(x.token)).map(x=>x.token);
+            const pushBase={type:'message_new',chatId,chatType:String(sendPolicy.rows[0]?.type??'direct'),senderName:req.zoolUser!.displayName};
+            if(detailedTokens.length)await sendData(detailedTokens,{...pushBase,body:detailedPreview});
+            if(genericTokens.length)await sendData(genericTokens,{...pushBase,body:'رسالة جديدة'});
+          """
+          if old not in s: raise SystemExit('message push marker missing')
+          s=s.replace(old,new,1)
+
+          start="app.get('/api/users/:id/profile', requireAuth, async(req,res)=>{"
+          end="app.get('/api/users/:id/presence', requireAuth, async (req,res)=>{"
+          block="""app.get('/api/users/:id/profile', requireAuth, async(req,res)=>{
+            const uid=req.zoolUser!.id,id=z.string().uuid().parse(req.params.id);
+            const shared=await pool.query(`SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$1 AND b.user_id=$2 LIMIT 1`,[uid,id]);
+            const blocked=await pool.query(`SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)`,[uid,id]);
+            if((uid!==id&&!shared.rowCount)||blocked.rowCount)return res.status(404).json({error:'profile_unavailable'});
+            const r=await pool.query(`SELECT u.id,u.display_name,u.username,u.about,u.photo_url,u.profile_photo_media_id,u.online,u.last_seen_at,COALESCE(p.show_online,true) show_online,COALESCE(p.show_last_seen,true) show_last_seen,COALESCE(p.profile_photo_visibility,'contacts') profile_photo_visibility,COALESCE(p.about_visibility,'contacts') about_visibility FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE u.id=$1 AND u.account_status='active'`,[id]);
+            if(!r.rowCount)return res.status(404).json({error:'profile_unavailable'});
+            const u=r.rows[0];
+            const related=uid===id||Boolean(shared.rowCount);
+            const photoVisible=uid===id||u.profile_photo_visibility==='everyone'||(u.profile_photo_visibility==='contacts'&&related);
+            const aboutVisible=uid===id||u.about_visibility==='everyone'||(u.about_visibility==='contacts'&&related);
+            const photoUrl=photoVisible?(u.profile_photo_media_id?`/api/media/${u.profile_photo_media_id}`:(u.photo_url??null)):null;
+            const groups=await pool.query(`SELECT c.id,c.title FROM chats c JOIN chat_members a ON a.chat_id=c.id AND a.user_id=$1 JOIN chat_members b ON b.chat_id=c.id AND b.user_id=$2 WHERE c.type='group'`,[uid,id]);
+            res.json({profile:{id:u.id,displayName:u.display_name,username:u.username,about:aboutVisible?u.about:null,photoUrl,online:u.show_online?u.online:null,lastSeenAt:u.show_last_seen?u.last_seen_at:null,groupsInCommon:groups.rows}});
+          });
+
+          """
+          s=between(s,start,end,block)
+
+          start="app.get('/api/privacy', requireAuth, async (req,res)=>{"
+          end="app.get('/api/account/export', requireAuth, async (req,res)=>{"
+          block="""app.get('/api/privacy', requireAuth, async (req,res)=>{
+            const r=await pool.query(`INSERT INTO user_privacy_settings(user_id) VALUES($1) ON CONFLICT(user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING *`,[req.zoolUser!.id]);
+            const x=r.rows[0];res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online,profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility,messagePreviews:x.message_previews}});
+          });
+          app.put('/api/privacy', requireAuth, async (req,res)=>{
+            const visibility=z.enum(['everyone','contacts','nobody']);
+            const b=z.object({readReceipts:z.boolean().optional(),showLastSeen:z.boolean().optional(),showOnline:z.boolean().optional(),profilePhotoVisibility:visibility.optional(),aboutVisibility:visibility.optional(),messagePreviews:z.boolean().optional()}).parse(req.body);
+            const r=await pool.query(`INSERT INTO user_privacy_settings(user_id,read_receipts,show_last_seen,show_online,profile_photo_visibility,about_visibility,message_previews) VALUES($1,COALESCE($2,true),COALESCE($3,true),COALESCE($4,true),COALESCE($5,'contacts'),COALESCE($6,'contacts'),COALESCE($7,true)) ON CONFLICT(user_id) DO UPDATE SET read_receipts=COALESCE($2,user_privacy_settings.read_receipts),show_last_seen=COALESCE($3,user_privacy_settings.show_last_seen),show_online=COALESCE($4,user_privacy_settings.show_online),profile_photo_visibility=COALESCE($5,user_privacy_settings.profile_photo_visibility),about_visibility=COALESCE($6,user_privacy_settings.about_visibility),message_previews=COALESCE($7,user_privacy_settings.message_previews),updated_at=now() RETURNING *`,[req.zoolUser!.id,b.readReceipts??null,b.showLastSeen??null,b.showOnline??null,b.profilePhotoVisibility??null,b.aboutVisibility??null,b.messagePreviews??null]);
+            const x=r.rows[0];res.json({privacy:{readReceipts:x.read_receipts,showLastSeen:x.show_last_seen,showOnline:x.show_online,profilePhotoVisibility:x.profile_photo_visibility,aboutVisibility:x.about_visibility,messagePreviews:x.message_previews}});
+          });
+          """
+          s=between(s,start,end,block)
+
+          old="SELECT u.id user_id,u.display_name,u.username,u.photo_url,cm.role,cm.joined_at FROM chat_members cm JOIN users u ON u.id=cm.user_id WHERE cm.chat_id=$1 ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.display_name"
+          new="""SELECT u.id user_id,u.display_name,u.username,
+            CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')<>'nobody' AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$2 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$2)) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url,
+            cm.role,cm.joined_at FROM chat_members cm JOIN users u ON u.id=cm.user_id LEFT JOIN user_privacy_settings p ON p.user_id=u.id WHERE cm.chat_id=$1 ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.display_name"""
+          if old not in s: raise SystemExit('group photo marker missing')
+          s=s.replace(old,new,1)
+          # Group member query now needs requester as $2.
+          old_call="[chatId]);\n  const x=g.rows[0];res.json({group:"
+          new_call="[chatId,uid]);\n  const x=g.rows[0];res.json({group:"
+          pos=s.find(new)
+          if pos<0: raise SystemExit('new group query not found')
+          tail=s[pos:pos+2500]
+          if old_call not in tail: raise SystemExit('group query args marker missing')
+          tail=tail.replace(old_call,new_call,1)
+          s=s[:pos]+tail+s[pos+2500:]
+          p.write_text(s)
+
+          # Android API: expose server-side preview preference.
+          p=Path('android/app/src/main/java/com/zoolchat/app/network/ApiClient.kt'); a=p.read_text()
+          old="""        aboutVisibility: String? = null,
+              ): JSONObject = put(
+          """
+          new="""        aboutVisibility: String? = null,
+                  messagePreviews: Boolean? = null,
+              ): JSONObject = put(
+          """
+          if old not in a: raise SystemExit('ApiClient privacy args marker missing')
+          a=a.replace(old,new,1)
+          old="""            aboutVisibility?.let { put("aboutVisibility", it) }
+                  },
+          """
+          new="""            aboutVisibility?.let { put("aboutVisibility", it) }
+                      messagePreviews?.let { put("messagePreviews", it) }
+                  },
+          """
+          if old not in a: raise SystemExit('ApiClient privacy body marker missing')
+          p.write_text(a.replace(old,new,1))
+
+          # Android privacy UI: keep local guard in sync with server preferences.
+          p=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt'); a=p.read_text()
+          marker='    var readReceipts by remember { mutableStateOf(prefs.getBoolean("read_receipts", true)) }\n'
+          insert=marker+'    var messagePreviews by remember { mutableStateOf(prefs.getBoolean("message_previews", true)) }\n    fun localVisibility(value:String)=when(value){"everyone"->"الجميع";"nobody"->"لا أحد";else->"جهات اتصالي"}\n    fun serverVisibility(value:String)=when(value){"الجميع"->"everyone";"لا أحد"->"nobody";else->"contacts"}\n'
+          if marker not in a: raise SystemExit('Profile privacy state marker missing')
+          a=a.replace(marker,insert,1)
+          marker='            val serverOnline = remote.optBoolean("showOnline", true)\n'
+          insert=marker+'            profilePhoto = localVisibility(remote.optString("profilePhotoVisibility", "contacts"))\n            aboutVisibility = localVisibility(remote.optString("aboutVisibility", "contacts"))\n            messagePreviews = remote.optBoolean("messagePreviews", true)\n'
+          if marker not in a: raise SystemExit('Profile privacy load marker missing')
+          a=a.replace(marker,insert,1)
+          old='                .putString("online_visibility", online)\n                .apply()'
+          new='                .putString("online_visibility", online)\n                .putString("profile_photo_visibility", profilePhoto)\n                .putString("about_visibility", aboutVisibility)\n                .putBoolean("message_previews", messagePreviews)\n                .apply()'
+          if old not in a: raise SystemExit('Profile prefs load marker missing')
+          a=a.replace(old,new,1)
+          marker='''        ToggleSetting(
+              icon = Icons.Rounded.DoneAll,
+              title = t("مؤشرات قراءة الرسائل"),'''
+          idx=a.find(marker)
+          if idx<0: raise SystemExit('read receipt toggle missing')
+          # Insert preview toggle after the complete read-receipts ToggleSetting block by locating its following privacyError.
+          pe='        privacyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }\n'
+          pi=a.find(pe,idx)
+          if pi<0: raise SystemExit('privacy error marker missing')
+          preview='''        ToggleSetting(
+              icon = Icons.Rounded.Notifications,
+              title = t("معاينة الرسائل في الإشعارات"),
+              subtitle = t("عند إيقافها ستظهر إشعارات الرسائل بدون محتوى الرسالة."),
+              checked = messagePreviews,
+              onCheckedChange = {
+                  messagePreviews = it
+                  prefs.edit().putBoolean("message_previews", it).apply()
+                  scope.launch { runCatching { api.updatePrivacy(messagePreviews = it) }.onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") } }
+              },
+          )
+'''
+          a=a[:pi]+preview+a[pi:]
+          old='''                                    "photo" -> { profilePhoto = option; prefs.edit().putString("profile_photo_visibility", option).apply() }
+                                      else -> { aboutVisibility = option; prefs.edit().putString("about_visibility", option).apply() }
+          '''
+          new='''                                    "photo" -> {
+                                          profilePhoto = option; prefs.edit().putString("profile_photo_visibility", option).apply()
+                                          scope.launch { runCatching { api.updatePrivacy(profilePhotoVisibility = serverVisibility(option)) }.onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") } }
+                                      }
+                                      else -> {
+                                          aboutVisibility = option; prefs.edit().putString("about_visibility", option).apply()
+                                          scope.launch { runCatching { api.updatePrivacy(aboutVisibility = serverVisibility(option)) }.onFailure { privacyError = t("تعذر تحديث إعدادات الخصوصية") } }
+                                      }
+          '''
+          if old not in a: raise SystemExit('photo/about selector marker missing')
+          p.write_text(a.replace(old,new,1))
+
+          # Defense in depth: local notification renderer also honors preview preference.
+          p=Path('android/app/src/main/java/com/zoolchat/app/notifications/NotificationHelper.kt'); a=p.read_text()
+          old='''        // Transport payloads must never become visible previews.
+              val preview=if(body.startsWith("zce") || body.startsWith("zlc")) "رسالة جديدة" else body
+          '''
+          new='''        // Transport payloads and user-disabled previews must never become visible notification content.
+              val allowPreview=context.getSharedPreferences("zoolchat_user_settings",0).getBoolean("message_previews",true)
+              val preview=if(!allowPreview || body.startsWith("zce") || body.startsWith("zlc")) "رسالة جديدة" else body
+          '''
+          if old not in a: raise SystemExit('Notification preview marker missing')
+          p.write_text(a.replace(old,new,1))
+
+          # Strengthen integration assertions for all privacy fields and profile-photo ownership.
+          p=Path('server/tests/profile-meeting.mjs'); a=p.read_text()
+          old="const privacy=await call(guest,'/api/privacy',{showOnline:false,showLastSeen:false,profilePhotoVisibility:'nobody',aboutVisibility:'nobody'},'PUT');"
+          new="const privacy=await call(guest,'/api/privacy',{showOnline:false,showLastSeen:false,profilePhotoVisibility:'nobody',aboutVisibility:'nobody',messagePreviews:false},'PUT');"
+          if old not in a: raise SystemExit('profile test privacy marker missing')
+          a=a.replace(old,new,1)
+          old="assert.equal(privacy.status,200);assert.equal(privacy.data.privacy.profilePhotoVisibility,'nobody');assert.equal(privacy.data.privacy.aboutVisibility,'nobody');"
+          new="assert.equal(privacy.status,200);assert.equal(privacy.data.privacy.profilePhotoVisibility,'nobody');assert.equal(privacy.data.privacy.aboutVisibility,'nobody');assert.equal(privacy.data.privacy.messagePreviews,false);"
+          if old not in a: raise SystemExit('profile test assert marker missing')
+          p.write_text(a.replace(old,new,1))
+      - name: Commit privacy completion and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/finalize-v032-privacy.yml
+          git config user.name "ZoolChat CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add server/migrations/013_v032_notification_privacy.sql server/src/index.ts server/tests/profile-meeting.mjs android/app/src/main/java/com/zoolchat/app/network/ApiClient.kt android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt android/app/src/main/java/com/zoolchat/app/notifications/NotificationHelper.kt
+          git commit -m "Complete v0.32 profile and notification privacy"
+          git push origin HEAD:zoolchat-v0.32-development
