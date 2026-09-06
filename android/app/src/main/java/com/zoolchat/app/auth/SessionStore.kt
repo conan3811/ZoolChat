@@ -19,6 +19,10 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean("notifications_explained", false)
         set(value) { prefs.edit().putBoolean("notifications_explained", value).apply() }
 
+    var initialProfileSetupPending: Boolean
+        get() = prefs.getBoolean("initial_profile_setup_pending", false)
+        set(value) { prefs.edit().putBoolean("initial_profile_setup_pending", value).apply() }
+
     var devUserId: String?
         get() = prefs.getString("dev_user_id", null)
         set(value) { prefs.edit().putString("dev_user_id", value).apply() }
@@ -43,7 +47,6 @@ class SessionStore(context: Context) {
             else prefs.edit().putString("api_base_url_override", normalized).apply()
         }
 
-
     var accessToken: String?
         get() = secure.reveal(prefs.getString("access_token", null))
         set(value) { if (value == null) prefs.edit().remove("access_token").apply() else prefs.edit().putString("access_token", secure.protect(value)).apply() }
@@ -56,7 +59,6 @@ class SessionStore(context: Context) {
         get() = prefs.getLong("access_token_expires_at_ms", 0L)
         set(value) { prefs.edit().putLong("access_token_expires_at_ms", value).apply() }
 
-
     var currentUserId: String?
         get() = prefs.getString("current_user_id", null)
         set(value) { if (value == null) prefs.edit().remove("current_user_id").apply() else prefs.edit().putString("current_user_id", value).apply() }
@@ -66,7 +68,14 @@ class SessionStore(context: Context) {
         set(value) { prefs.edit().putString("account_username", value).apply() }
 
     fun clearFreeAuth() {
-        prefs.edit().remove("access_token").remove("refresh_token").remove("access_token_expires_at_ms").remove("account_username").remove("current_user_id").apply()
+        prefs.edit()
+            .remove("access_token")
+            .remove("refresh_token")
+            .remove("access_token_expires_at_ms")
+            .remove("account_username")
+            .remove("current_user_id")
+            .remove("initial_profile_setup_pending")
+            .apply()
     }
 
     fun clearDevIdentity() {
