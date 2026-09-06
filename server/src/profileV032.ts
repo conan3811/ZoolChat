@@ -70,6 +70,12 @@ export function installProfileV032(app:Express){
   res.json({user:selfJson(r.rows[0])});
  });
 
+ app.post('/api/devices/fcm/revoke',requireAuth,async(req,res)=>{
+  const token=z.object({token:z.string().min(10).max(4096)}).parse(req.body).token;
+  await pool.query('UPDATE devices SET revoked_at=now(),updated_at=now() WHERE user_id=$1 AND fcm_token=$2 AND revoked_at IS NULL',[req.zoolUser!.id,token]);
+  res.json({ok:true});
+ });
+
  app.get('/api/privacy',requireAuth,async(req,res)=>{
   const r=await pool.query(`INSERT INTO user_privacy_settings(user_id) VALUES($1)
    ON CONFLICT(user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING *`,[req.zoolUser!.id]);
