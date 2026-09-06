@@ -137,16 +137,20 @@ jobs:
 
           sync = root / "sync/MessageSyncRepository.kt"
           s = sync.read_text()
-          anchor = '''    private suspend fun updatePreview(chatId: String, message: String, at: String) =
-        db.chats().updateLastMessage(chatId, localCrypto.protect(message) ?: "", at)
-'''
-          helper = '''
-    private fun previewFor(message: RemoteMessage): String = when {
-        message.deleted -> "تم حذف الرسالة"
-        message.type == "text" -> message.body
-        else -> "📎 ${message.mediaName ?: message.body.ifBlank { "مرفق" }}"
-    }
-'''
+          anchor = "\n".join([
+              "    private suspend fun updatePreview(chatId: String, message: String, at: String) =",
+              '        db.chats().updateLastMessage(chatId, localCrypto.protect(message) ?: "", at)',
+              "",
+          ])
+          helper = "\n".join([
+              "",
+              "    private fun previewFor(message: RemoteMessage): String = when {",
+              '        message.deleted -> "تم حذف الرسالة"',
+              '        message.type == "text" -> message.body',
+              '        else -> "📎 ${message.mediaName ?: message.body.ifBlank { "مرفق" }}"',
+              "    }",
+              "",
+          ])
           if 'private fun previewFor(message: RemoteMessage)' not in s:
               if anchor not in s:
                   raise SystemExit("MessageSyncRepository preview anchor not found")
