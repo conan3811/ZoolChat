@@ -7,6 +7,7 @@ on:
       - 'server/**'
       - 'scripts/privacy_scan.py'
       - 'cloud/API_BASE_URL.txt'
+      - 'cloud/Dockerfile.v032'
       - '.github/workflows/validate-v032.yml'
       - '.github/workflows/build-v032-firebase.yml'
   workflow_dispatch:
@@ -96,6 +97,53 @@ jobs:
           node tests/email-recovery.mjs
           node tests/profile-meeting.mjs
         working-directory: server
+  container-image:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zoolchat_container_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_container_password
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build v0.32 deployment image
+        run: docker build -f cloud/Dockerfile.v032 -t zoolchat-v032-ci .
+      - name: Boot deployment image and verify startup migrations/health
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --network host --name zoolchat-v032-ci \
+            -e PORT=18080 \
+            -e DATABASE_URL=postgresql://postgres:ci_container_password@127.0.0.1:5432/zoolchat_container_test \
+            -e FREE_AUTH_ENABLED=true \
+            -e FIREBASE_AUTH_ENABLED=false \
+            -e LIVEKIT_URL=ws://127.0.0.1:7880 \
+            -e LIVEKIT_API_KEY=ci-test-key \
+            -e LIVEKIT_API_SECRET=ci-test-secret-not-for-production \
+            -e MAIL_HOST=127.0.0.1 \
+            -e MAIL_PORT=1025 \
+            -e MAIL_FROM='ZoolChat Container Validation <noreply@example.invalid>' \
+            -e MAIL_REQUIRE_TLS=false \
+            zoolchat-v032-ci
+          trap 'docker logs zoolchat-v032-ci || true; docker stop zoolchat-v032-ci >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 40); do
+            if HEALTH_JSON="$(curl --fail --silent http://127.0.0.1:18080/health 2>/dev/null)"; then
+              break
+            fi
+            sleep 1
+          done
+          test -n "${HEALTH_JSON:-}"
+          HEALTH_JSON="$HEALTH_JSON" node - <<'NODE'
+          const h=JSON.parse(process.env.HEALTH_JSON||'{}');
+          if(h.version!=='0.32.0-dev'||h.ok!==true||h.db!==true||h.livekitConfigured!==true||h.emailConfigured!==true){
+            console.error('deployment image health validation failed');process.exit(1)
+          }
+          console.log('PASS: deployable v0.32 container built, migrations applied, service healthy');
+          NODE
   android:
     runs-on: ubuntu-latest
     steps:
