@@ -25,12 +25,13 @@ jobs:
           python - "$BODY" <<'PY'
           import json, sys
           h=json.loads(sys.argv[1])
+          print('service=', h.get('service'))
+          print('version=', h.get('version'))
           print('ok=', h.get('ok'))
           print('db=', h.get('db'))
-          print('livekit=', h.get('livekit'))
-          print('firebase=', h.get('firebase'))
-          print('freeAuth=', h.get('freeAuth'))
-          print('devAuth=', h.get('devAuth'))
+          print('livekitConfigured=', h.get('livekitConfigured'))
+          print('firebaseConfigured=', h.get('firebaseConfigured'))
+          print('mediaStorage=', h.get('mediaStorage'))
           if not h.get('ok'):
               raise SystemExit('Backend /health reports not ready')
           PY
