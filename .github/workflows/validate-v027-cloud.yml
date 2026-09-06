@@ -30,6 +30,16 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
+      - name: Generate ephemeral CI credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADMIN_CI_PASSWORD="$(openssl rand -hex 24)"
+          USER_CI_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::$ADMIN_CI_PASSWORD"
+          echo "::add-mask::$USER_CI_PASSWORD"
+          echo "ADMIN_CI_PASSWORD=$ADMIN_CI_PASSWORD" >> "$GITHUB_ENV"
+          echo "USER_CI_PASSWORD=$USER_CI_PASSWORD" >> "$GITHUB_ENV"
       - name: Verify packed cloud archives
         shell: bash
         run: |
@@ -40,8 +50,9 @@ jobs:
           cat cloud/v0_31/part_00.b64 cloud/v0_31/part_01.b64 cloud/v0_31/part_02.b64 cloud/v0_31/part_03.b64 cloud/v0_31/part_04.b64 > /tmp/v031.b64
           base64 -d /tmp/v031.b64 > /tmp/v031.tar.gz
           echo "ade435a69c499ba20bb82bfa409a16fde11841bb108908a618d99d6eca26e518  /tmp/v031.tar.gz" | sha256sum -c -
-          tar -tzf /tmp/v031.tar.gz | grep -q 'src/admin.ts'
-          tar -tzf /tmp/v031.tar.gz | grep -q 'migrations/009_admin_dashboard.sql'
+          tar -tzf /tmp/v031.tar.gz > /tmp/v031.list
+          grep -q '^src/admin.ts$' /tmp/v031.list
+          grep -q '^migrations/009_admin_dashboard.sql$' /tmp/v031.list
       - name: Build production container
         run: docker build -f cloud/Dockerfile cloud -t zoolchat-v031
       - name: Start ZoolChat against PostgreSQL
@@ -56,7 +67,7 @@ jobs:
             -e DEV_AUTH_ENABLED=false \
             -e TRUST_PROXY=true \
             -e ADMIN_USERNAME=admin \
-            -e ADMIN_PASSWORD='ZoolChat-Admin-CI-2026!' \
+            -e ADMIN_PASSWORD="$ADMIN_CI_PASSWORD" \
             zoolchat-v031
           ok=0
           for i in $(seq 1 30); do
@@ -75,19 +86,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REGISTER=$(curl -fsS -X POST http://127.0.0.1:8080/api/auth/register \
-            -H 'content-type: application/json' \
-            -d '{"email":"ci@example.com","username":"zoolchat_ci","password":"ZoolChat-CI-2026!","phoneE164":"+966500000001","deviceName":"CI"}')
+          REGISTER_BODY=$(python - <<'PY'
+          import json, os
+          print(json.dumps({"email":"ci@example.com","username":"zoolchat_ci","password":os.environ["USER_CI_PASSWORD"],"phoneE164":"+966500000001","deviceName":"CI"}))
+          PY
+          )
+          REGISTER=$(curl -fsS -X POST http://127.0.0.1:8080/api/auth/register -H 'content-type: application/json' -d "$REGISTER_BODY")
           echo "$REGISTER" | grep -q 'accessToken'
           USER_ID=$(python -c 'import json,sys; print(json.load(sys.stdin)["user"]["id"])' <<< "$REGISTER")
-          LOGIN=$(curl -fsS -X POST http://127.0.0.1:8080/api/auth/login \
-            -H 'content-type: application/json' \
-            -d '{"identifier":"zoolchat_ci","password":"ZoolChat-CI-2026!","deviceName":"CI2"}')
+          LOGIN_BODY=$(python - <<'PY'
+          import json, os
+          print(json.dumps({"identifier":"zoolchat_ci","password":os.environ["USER_CI_PASSWORD"],"deviceName":"CI2"}))
+          PY
+          )
+          LOGIN=$(curl -fsS -X POST http://127.0.0.1:8080/api/auth/login -H 'content-type: application/json' -d "$LOGIN_BODY")
           echo "$LOGIN" | grep -q 'accessToken'
           curl -fsS http://127.0.0.1:8080/admin | grep -q 'ZoolChat'
-          curl -fsS -D /tmp/admin.headers -o /tmp/admin.login -X POST http://127.0.0.1:8080/api/admin/login \
-            -H 'content-type: application/json' \
-            -d '{"username":"admin","password":"ZoolChat-Admin-CI-2026!"}'
+          ADMIN_LOGIN_BODY=$(python - <<'PY'
+          import json, os
+          print(json.dumps({"username":"admin","password":os.environ["ADMIN_CI_PASSWORD"]}))
+          PY
+          )
+          curl -fsS -D /tmp/admin.headers -o /tmp/admin.login -X POST http://127.0.0.1:8080/api/admin/login -H 'content-type: application/json' -d "$ADMIN_LOGIN_BODY"
           grep -q '"ok":true' /tmp/admin.login
           COOKIE=$(grep -i '^Set-Cookie:' /tmp/admin.headers | head -1 | sed -E 's/^Set-Cookie: *([^;]+).*/\1/I' | tr -d '\r')
           test -n "$COOKIE"
@@ -96,7 +116,7 @@ jobs:
           USERS=$(curl -fsS -H "Cookie: $COOKIE" 'http://127.0.0.1:8080/api/admin/users?q=zoolchat_ci')
           echo "$USERS" | grep -q 'zoolchat_ci'
           curl -fsS -H "Cookie: $COOKIE" -H 'content-type: application/json' -X POST "http://127.0.0.1:8080/api/admin/users/$USER_ID/suspend" -d '{"reason":"CI moderation test"}' | grep -q '"ok":true'
-          CODE=$(curl -sS -o /tmp/suspended.login -w '%{http_code}' -X POST http://127.0.0.1:8080/api/auth/login -H 'content-type: application/json' -d '{"identifier":"zoolchat_ci","password":"ZoolChat-CI-2026!"}')
+          CODE=$(curl -sS -o /tmp/suspended.login -w '%{http_code}' -X POST http://127.0.0.1:8080/api/auth/login -H 'content-type: application/json' -d "$LOGIN_BODY")
           test "$CODE" = 403
           curl -fsS -H "Cookie: $COOKIE" -H 'content-type: application/json' -X POST "http://127.0.0.1:8080/api/admin/users/$USER_ID/activate" -d '{}' | grep -q '"ok":true'
           curl -fsS -H "Cookie: $COOKIE" http://127.0.0.1:8080/api/admin/audit | grep -q 'user.suspend'
