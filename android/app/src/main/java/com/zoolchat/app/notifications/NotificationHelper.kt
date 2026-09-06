@@ -5,7 +5,6 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -20,6 +19,8 @@ object NotificationHelper {
     const val CALL_CHANNEL="zoolchat_calls_v032"
     const val MISSED_CHANNEL="zoolchat_missed_calls_v032"
     const val MEET_CHANNEL="zoolchat_meet_v032"
+    private const val MESSAGE_GROUP="zoolchat_message_notifications"
+
     fun ensureChannels(context:Context) {
         val nm=context.getSystemService(NotificationManager::class.java)
         for ((id,name) in listOf(CHAT_CHANNEL to "Messages", GROUP_CHANNEL to "Group messages", MISSED_CHANNEL to "Missed calls", MEET_CHANNEL to "ZoolMeet invitations")) {
@@ -31,8 +32,10 @@ object NotificationHelper {
         }
         nm.createNotificationChannel(NotificationChannel(CALL_CHANNEL,"ZoolChat calls",NotificationManager.IMPORTANCE_HIGH).apply { enableVibration(true); lockscreenVisibility=Notification.VISIBILITY_PRIVATE;setSound(android.provider.Settings.System.DEFAULT_RINGTONE_URI,android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build()) })
     }
+
     fun clearMessage(context:Context,chatId:String) { context.getSystemService(NotificationManager::class.java).cancel(chatId.hashCode()) }
-    fun showMessage(context:Context,title:String,body:String,chatId:String) {
+
+    fun showMessage(context:Context,title:String,body:String,chatId:String,isGroup:Boolean=false) {
         if(chatId.isBlank() || ConversationVisibility.isOpen(chatId)) { clearMessage(context,chatId); return }
         if(context.getSharedPreferences("zoolchat_user_settings",0).getLong("mute_until_$chatId",0)>System.currentTimeMillis())return
         ensureChannels(context)
@@ -41,23 +44,30 @@ object NotificationHelper {
         val pi=PendingIntent.getActivity(context,chatId.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         // Transport payloads must never become visible previews.
         val preview=if(body.startsWith("zce") || body.startsWith("zlc")) "رسالة جديدة" else body
-        val n=NotificationCompat.Builder(context,CHAT_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat)
+        val channel=if(isGroup) GROUP_CHANNEL else CHAT_CHANNEL
+        val n=NotificationCompat.Builder(context,channel).setSmallIcon(R.drawable.ic_stat_zoolchat)
             .setContentTitle(title).setContentText(preview).setAutoCancel(true).setContentIntent(pi)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPriority(NotificationCompat.PRIORITY_HIGH).build()
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE).setGroup(MESSAGE_GROUP).build()
+        // One stable notification per conversation prevents duplicate stacks while still alerting
+        // for each new message. Android groups multiple active conversations under MESSAGE_GROUP.
         context.getSystemService(NotificationManager::class.java).notify(chatId.hashCode(),n)
     }
+
     fun showMeetingInvite(context:Context,id:String,title:String) {
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         val intent=Intent(context,MainActivity::class.java).putExtra("open_meet",true)
         val pi=PendingIntent.getActivity(context,id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MEET_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolMeet").setContentText(title).setContentIntent(pi).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
+        context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MEET_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolMeet").setContentText(title).setContentIntent(pi).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPriority(NotificationCompat.PRIORITY_HIGH).build())
     }
+
     fun showMissedCall(context:Context,id:String) {
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
-        context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MISSED_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolChat").setContentText("مكالمة فائتة").setAutoCancel(true).build())
+        context.getSystemService(NotificationManager::class.java).notify(id.hashCode(),NotificationCompat.Builder(context,MISSED_CHANNEL).setSmallIcon(R.drawable.ic_stat_zoolchat).setContentTitle("ZoolChat").setContentText("مكالمة فائتة").setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
     }
+
     fun showIncomingCall(context:Context,callId:String,caller:String,video:Boolean){
         ensureChannels(context)
         if(Build.VERSION.SDK_INT>=33&&ActivityCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
@@ -82,6 +92,7 @@ object NotificationHelper {
             .setContentText(if(video)"مكالمة فيديو واردة" else "مكالمة صوتية واردة")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setOngoing(true)
             .setTimeoutAfter(60_000)
             .setContentIntent(screen)
