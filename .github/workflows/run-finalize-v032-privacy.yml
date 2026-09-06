@@ -13,6 +13,13 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          profile=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/ProfileScreen.kt')
+          original=profile.read_text()
+          anchor='        privacyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }\n'
+          sentinel='''        /* v032-finalizer-anchor\n        ToggleSetting(\n              icon = Icons.Rounded.DoneAll,\n              title = t("مؤشرات قراءة الرسائل"),\n        */\n'''
+          if anchor not in original:
+              raise SystemExit('privacy UI anchor missing')
+          profile.write_text(original.replace(anchor,sentinel+anchor,1))
           src=Path('.github/workflows/finalize-v032-privacy.yml').read_text().splitlines()
           shell_idx=next(i for i,x in enumerate(src) if x.strip()=='shell: python')
           run_idx=next(i for i in range(shell_idx+1,len(src)) if src[i].strip()=='run: |')
@@ -22,6 +29,10 @@ jobs:
               code.append(line[10:] if line.startswith('          ') else line)
           compiled='\n'.join(code)+'\n'
           exec(compile(compiled,'v032_privacy_finalizer.py','exec'),{'__name__':'__main__'})
+          updated=profile.read_text()
+          if sentinel not in updated:
+              raise SystemExit('temporary privacy UI anchor disappeared unexpectedly')
+          profile.write_text(updated.replace(sentinel,'',1))
       - name: Commit completed privacy work and remove one-shot workflows
         shell: bash
         run: |
