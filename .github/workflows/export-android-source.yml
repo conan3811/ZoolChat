@@ -1,9 +1,9 @@
-name: Export reconstructed Android source
+name: Export ZoolChat v0.32 Android source
 
 on:
   workflow_dispatch:
   push:
-    branches: [ zoolchat-v0.27-cloud-beta ]
+    branches: [ zoolchat-v0.32-development ]
     paths:
       - '.github/workflows/export-android-source.yml'
 
@@ -15,41 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct Android source with current overlays
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p work
-          cat \
-            release/parts/part00.b64 \
-            release/parts/part01.b64 \
-            release/parts/part02.b64 \
-            release/parts/part03.b64 \
-            release/parts/part04.b64 \
-            release/parts/part05.b64 \
-            release/parts/part06.b64 \
-            release/parts/part07.b64 \
-            release/safe/s08_0.b64 release/safe/s08_1.b64 release/safe/s08_2.b64 release/safe/s08_3.b64 release/safe/s08_4.b64 \
-            release/safe/s09_0.b64 release/safe/s09_1.b64 release/safe/s09_2.b64 release/safe/s09_3.b64 release/safe/s09_4.b64 \
-            release/parts/part10.b64 \
-            release/parts/part11.b64 \
-            release/safe/s12_0.b64 release/safe/s12_1.b64 release/safe/s12_2.b64 release/safe/s12_3.b64 \
-            release/safe/s12_4a.b64 release/safe/s12_4b.b64 release/safe/s12_4c.b64 \
-            release/parts/part13.b64 \
-            > work/ZoolChat-source.b64
-          base64 -d work/ZoolChat-source.b64 > work/ZoolChat-source.zip
-          unzip -q work/ZoolChat-source.zip -d work
-          cat release/patches/v0_25_0a.b64 release/patches/v0_25_0b.b64 release/patches/v0_25_1.b64 release/patches/v0_25_2.b64 release/patches/v0_25_3.b64 release/patches/v0_25_4.b64 > work/v0_25_overlay.b64
-          base64 -d work/v0_25_overlay.b64 > work/v0_25_overlay.tar.gz
-          tar -xzf work/v0_25_overlay.tar.gz -C work/ZoolChat_v0_24
-          cat release/v0_26/v026_00.b64 release/v0_26/v026_01.b64 release/v0_26/v026_02.b64 release/v0_26/v026_03.b64 release/v0_26/v026_04.b64 > work/v0_26_overlay.b64
-          base64 -d work/v0_26_overlay.b64 > work/v0_26_overlay.tar.gz
-          tar -xzf work/v0_26_overlay.tar.gz -C work/ZoolChat_v0_24
-          base64 -d release/v0_27/keystore_iv_fix.b64 > work/v0_27_keystore_iv_fix.tar.gz
-          tar -xzf work/v0_27_keystore_iv_fix.tar.gz -C work/ZoolChat_v0_24
-      - name: Upload reconstructed Android source
+      - name: Upload current v0.32 Android source
         uses: actions/upload-artifact@v4
         with:
-          name: zoolchat-reconstructed-android-source
-          path: work/ZoolChat_v0_24/android
+          name: zoolchat-v032-android-source
+          path: android
           retention-days: 2
+          if-no-files-found: error
