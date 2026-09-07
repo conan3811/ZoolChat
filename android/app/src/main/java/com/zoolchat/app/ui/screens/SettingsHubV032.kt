@@ -280,7 +280,7 @@ fun HelpSettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
     var dialog by remember { mutableStateOf<String?>(null) }
     SettingsPage(t("المساعدة"), onBack) {
         SettingsRow(Icons.Rounded.HelpOutline, t("مركز المساعدة"), t("أسئلة شائعة حول الحساب والرسائل والمكالمات")) { dialog = "help" }
-        SettingsRow(Icons.Rounded.Phone, t("تواصل معنا"), t("فتح محادثة دعم عبر واتساب")) { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/966567638840"))) } }
+        SettingsRow(Icons.Rounded.Phone, t("تواصل معنا"), t("المساعدة والدعم الفني")) { dialog = "help" }
         SettingsRow(Icons.Rounded.PrivacyTip, t("الشروط وسياسة الخصوصية"), t("كيف يتعامل ZoolChat مع بياناتك")) { dialog = "privacy" }
         SettingsRow(Icons.Rounded.Info, t("معلومات عن التطبيق"), "ZoolChat • v${BuildConfig.VERSION_NAME}", onAbout)
     }

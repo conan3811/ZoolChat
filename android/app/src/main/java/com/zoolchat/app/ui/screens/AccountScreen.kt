@@ -77,7 +77,7 @@ fun AccountScreen(
                 AccountSection(t("تسجيل الدخول والأمان"))
                 AccountRow(Icons.Rounded.Passkey,t("مفاتيح المرور"),t("تسجيل دخول بدون كلمة مرور عند توفر الدعم")){infoDialog="passkey"}
                 AccountRow(Icons.Rounded.Password,t("كلمة المرور"),t("تغيير كلمة مرور الحساب")){showPassword=true}
-                AccountRow(Icons.Rounded.Email,t("البريد الإلكتروني"),if(email.isBlank())t("إضافة بريد إلكتروني") else if(emailVerified)t("موثّق") else t("غير موثّق"),onEditIdentity)
+                AccountRow(Icons.Rounded.Email,t("البريد الإلكتروني"),if(email.isBlank())t("إضافة بريد إلكتروني") else if(emailVerified)t("موثّق") else t("غير موثّق"),onClick=onEditIdentity)
                 AccountRow(Icons.Rounded.EnhancedEncryption,t("التحقق بخطوتين"),t("طبقة أمان إضافية للحساب")){infoDialog="2fa"}
                 AccountToggle(Icons.Rounded.Security,t("إشعارات الأمان"),t("تنبيهك عند تغير مفاتيح الأمان المهمة"),securityNotifications){
                     securityNotifications=it
@@ -86,7 +86,7 @@ fun AccountScreen(
                 AccountRow(Icons.Rounded.CloudDone,t("حماية سجل الرسائل المشفرة"),t("حفظ مفتاح التشفير بنسخة مشفرة لاستعادته بعد إعادة التثبيت")){showBackup=true}
 
                 AccountSection(t("حسابك"))
-                AccountRow(Icons.Rounded.AlternateEmail,t("اسم المستخدم"),if(username.isBlank())t("إضافة اسم مستخدم") else "@$username",onEditIdentity)
+                AccountRow(Icons.Rounded.AlternateEmail,t("اسم المستخدم"),if(username.isBlank())t("إضافة اسم مستخدم") else "@$username",onClick=onEditIdentity)
                 AccountRow(Icons.Rounded.PhoneForwarded,t("تغيير رقم الهاتف"),phone.ifBlank{t("تحديث رقم الحساب")}){showPhone=true}
 
                 AccountSection(t("الأجهزة والبيانات"))
@@ -104,8 +104,8 @@ fun AccountScreen(
                     scope.launch{runCatching{api.exportAccount().toString(2)}.onSuccess{exporting=it;createExport.launch("zoolchat-export.json")}.onFailure{safeError()}}
                 }
                 HorizontalDivider(Modifier.padding(horizontal=16.dp,vertical=8.dp))
-                AccountRow(Icons.Rounded.DeleteForever,t("حذف حساب ZoolChat نهائياً"),t("حذف الحساب والبيانات المرتبطة به"),{showDelete=true},danger=true)
-                AccountRow(Icons.Rounded.Logout,t("تسجيل الخروج"),t("الخروج من هذا الحساب على هذا الجهاز"),onLogout,danger=true)
+                AccountRow(Icons.Rounded.DeleteForever,t("حذف حساب ZoolChat نهائياً"),t("حذف الحساب والبيانات المرتبطة به"),danger=true,onClick={showDelete=true})
+                AccountRow(Icons.Rounded.Logout,t("تسجيل الخروج"),t("الخروج من هذا الحساب على هذا الجهاز"),danger=true,onClick=onLogout)
             }
         }
     }
@@ -192,7 +192,7 @@ private fun PasswordChangeDialog(busy:Boolean,onDismiss:()->Unit,onSubmit:(Strin
 private fun PhoneChangeDialog(initial:String,busy:Boolean,onDismiss:()->Unit,onSubmit:(String,String)->Unit){
     var next by remember(initial){mutableStateOf(initial)};var password by remember{mutableStateOf("")};var localError by remember{mutableStateOf<String?>(null)}
     AlertDialog(onDismissRequest=onDismiss,title={Text(t("تغيير رقم الهاتف"))},text={Column{
-        OutlinedTextField(next,{next=it.trim()},label={Text(t("رقم الهاتف بالصيغة الدولية"))},placeholder={Text("+9665xxxxxxxx")},singleLine=true,enabled=!busy)
+        OutlinedTextField(next,{next=it.trim()},label={Text(t("رقم الهاتف بالصيغة الدولية"))},placeholder={Text("+xxxxxxxxxxxx")},singleLine=true,enabled=!busy)
         OutlinedTextField(password,{password=it},label={Text(t("كلمة المرور"))},visualTransformation=PasswordVisualTransformation(),singleLine=true,enabled=!busy)
         localError?.let{Text(it,color=MaterialTheme.colorScheme.error)}
     }},confirmButton={Button(enabled=!busy,onClick={if(!Regex("^\\+[1-9]\\d{5,14}$").matches(next)||password.length<8)localError=t("تحقق من الرقم وكلمة المرور") else onSubmit(next,password)}){Text(t("حفظ"))}},dismissButton={TextButton(enabled=!busy,onClick=onDismiss){Text(t("إلغاء"))}})
@@ -214,7 +214,7 @@ private fun AccountSection(text:String){
 }
 
 @Composable
-private fun AccountRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit,danger:Boolean=false){
+private fun AccountRow(icon:ImageVector,title:String,subtitle:String,danger:Boolean=false,onClick:()->Unit){
     val tint=if(danger)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
     Row(Modifier.fillMaxWidth().heightIn(min=64.dp).clickable(onClick=onClick).padding(horizontal=18.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
         Icon(icon,null,tint=tint,modifier=Modifier.size(ACCOUNT_ICON_DP.dp));Spacer(Modifier.width(16.dp))
