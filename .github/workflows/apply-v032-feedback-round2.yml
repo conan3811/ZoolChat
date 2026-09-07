@@ -56,15 +56,17 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('scripts/apply_v032_feedback_round2.py')
-          text=p.read_text(encoding='utf-8')
-          # Repair the accidental unterminated triple-quoted empty replacement in the manifest patch.
-          lines=text.splitlines()
-          for i,line in enumerate(lines[:-1]):
-              if 'FOREGROUND_SERVICE_SPECIAL_USE' in line and lines[i+1].strip() == '""",':
-                  lines[i+1]='    "",'
-                  break
-          text='\n'.join(lines)+'\n'
-          p.write_text(text,encoding='utf-8')
+          lines=p.read_text(encoding='utf-8').splitlines()
+          fixed=0
+          out=[]
+          for line in lines:
+              if line == '    """,':
+                  out.append('    "",')
+                  fixed += 1
+              else:
+                  out.append(line)
+          p.write_text('\n'.join(out)+'\n',encoding='utf-8')
+          print(f'Normalized {fixed} empty replacement literals')
           PY
           python3 -m py_compile scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py
           python3 scripts/apply_v032_feedback_round2.py
