@@ -40,6 +40,7 @@ data class CachedMessageEntity(
     val encrypted: Boolean = false,
     val cryptoVersion: Int = 0,
     val decryptionFailed: Boolean = false,
+    val reactionsJson: String = "[]",
 )
 
 @Entity(tableName = "pending_messages", indices = [Index("chatId")])
@@ -106,6 +107,9 @@ interface MessageDao {
     @Query("UPDATE cached_messages SET body='', deleted=1 WHERE id=:messageId")
     suspend fun markDeleted(messageId: String)
 
+    @Query("UPDATE cached_messages SET reactionsJson=:reactionsJson WHERE id=:messageId")
+    suspend fun updateReactions(messageId: String, reactionsJson: String)
+
     @Query("SELECT * FROM cached_messages WHERE id=:messageId LIMIT 1")
     suspend fun byId(messageId: String): CachedMessageEntity?
 
@@ -145,7 +149,7 @@ interface PendingMessageDao {
 
 @Database(
     entities = [CachedChatEntity::class, CachedMessageEntity::class, PendingMessageEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class ZoolDatabase : RoomDatabase() {
@@ -168,12 +172,17 @@ abstract class ZoolDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_messages ADD COLUMN decryptionFailed INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN reactionsJson TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
         fun get(context: Context): ZoolDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(
                 context.applicationContext,
                 ZoolDatabase::class.java,
                 "zoolchat_cache.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { INSTANCE = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { INSTANCE = it }
         }
     }
 }

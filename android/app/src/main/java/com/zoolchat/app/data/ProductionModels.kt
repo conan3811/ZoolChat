@@ -27,6 +27,12 @@ data class RemoteChat(
     val unread: Int,
 )
 
+data class RemoteReaction(
+    val emoji: String,
+    val count: Int,
+    val reactedByMe: Boolean,
+)
+
 data class RemoteMessage(
     val id: String,
     val chatId: String,
@@ -45,6 +51,7 @@ data class RemoteMessage(
     val encrypted: Boolean = false,
     val cryptoVersion: Int = 0,
     val decryptionFailed: Boolean = false,
+    val reactions: List<RemoteReaction> = emptyList(),
 )
 
 data class CallConnection(

@@ -188,7 +188,7 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
   });
 
   app.get('/api/e2ee/self-key',requireAuth,accountLimiter,async(req,res)=>{
-    const r=await pool.query('SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1',[req.zoolUser!.id]);
+    const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1 UNION ALL SELECT 'P256-ECDH'::text algorithm,public_key_b64,fingerprint_sha256,updated_at FROM e2ee_identity_backups WHERE user_id=$1 AND NOT EXISTS(SELECT 1 FROM user_crypto_keys WHERE user_id=$1) LIMIT 1`,[req.zoolUser!.id]);
     if(!r.rowCount)return res.status(404).json({error:'e2ee_key_missing'});
     const x=r.rows[0];res.json({algorithm:x.algorithm,publicKeyB64:x.public_key_b64,fingerprintSha256:x.fingerprint_sha256,updatedAt:new Date(x.updated_at).toISOString()});
   });
@@ -208,11 +208,16 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
     }).safeParse(req.body);
     if(!b.success)return res.status(400).json({error:'invalid_request'});
     const uid=req.zoolUser!.id;
-    const current=await pool.query('SELECT public_key_b64,fingerprint_sha256 FROM user_crypto_keys WHERE user_id=$1',[uid]);
+    const current=await pool.query(`SELECT public_key_b64,fingerprint_sha256 FROM user_crypto_keys WHERE user_id=$1 UNION ALL SELECT public_key_b64,fingerprint_sha256 FROM e2ee_identity_backups WHERE user_id=$1 AND NOT EXISTS(SELECT 1 FROM user_crypto_keys WHERE user_id=$1) LIMIT 1`,[uid]);
     if(current.rowCount&&(String(current.rows[0].public_key_b64)!==b.data.publicKeyB64||String(current.rows[0].fingerprint_sha256).toUpperCase()!==b.data.fingerprintSha256.toUpperCase()))return res.status(409).json({error:'e2ee_key_conflict'});
-    await pool.query(`INSERT INTO e2ee_identity_backups(user_id,version,public_key_b64,fingerprint_sha256,salt_b64,iv_b64,ciphertext_b64)
-      VALUES($1,$2,$3,$4,$5,$6,$7)
-      ON CONFLICT(user_id) DO UPDATE SET version=EXCLUDED.version,public_key_b64=EXCLUDED.public_key_b64,fingerprint_sha256=EXCLUDED.fingerprint_sha256,salt_b64=EXCLUDED.salt_b64,iv_b64=EXCLUDED.iv_b64,ciphertext_b64=EXCLUDED.ciphertext_b64,updated_at=now()`,[uid,b.data.version,b.data.publicKeyB64,b.data.fingerprintSha256,b.data.saltB64,b.data.ivB64,b.data.ciphertextB64]);
+    await tx(async c=>{
+      await c.query(`INSERT INTO user_crypto_keys(user_id,algorithm,public_key_b64,fingerprint_sha256)
+        VALUES($1,'P256-ECDH',$2,$3)
+        ON CONFLICT(user_id) DO UPDATE SET public_key_b64=EXCLUDED.public_key_b64,fingerprint_sha256=EXCLUDED.fingerprint_sha256,updated_at=now()`,[uid,b.data.publicKeyB64,b.data.fingerprintSha256]);
+      await c.query(`INSERT INTO e2ee_identity_backups(user_id,version,public_key_b64,fingerprint_sha256,salt_b64,iv_b64,ciphertext_b64)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(user_id) DO UPDATE SET version=EXCLUDED.version,public_key_b64=EXCLUDED.public_key_b64,fingerprint_sha256=EXCLUDED.fingerprint_sha256,salt_b64=EXCLUDED.salt_b64,iv_b64=EXCLUDED.iv_b64,ciphertext_b64=EXCLUDED.ciphertext_b64,updated_at=now()`,[uid,b.data.version,b.data.publicKeyB64,b.data.fingerprintSha256,b.data.saltB64,b.data.ivB64,b.data.ciphertextB64]);
+    });
     res.json({ok:true});
   });
 }

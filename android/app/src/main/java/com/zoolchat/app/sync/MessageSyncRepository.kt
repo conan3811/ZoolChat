@@ -18,6 +18,7 @@ import com.zoolchat.app.crypto.E2eeManager
 import com.zoolchat.app.crypto.LocalStorageCrypto
 import com.zoolchat.app.data.RemoteChat
 import com.zoolchat.app.data.RemoteMessage
+import com.zoolchat.app.data.RemoteReaction
 import com.zoolchat.app.data.local.CachedChatEntity
 import com.zoolchat.app.data.local.CachedMessageEntity
 import com.zoolchat.app.data.local.PendingMessageEntity
@@ -25,6 +26,7 @@ import com.zoolchat.app.data.local.ZoolDatabase
 import com.zoolchat.app.network.ApiClient
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
@@ -70,10 +72,30 @@ class MessageSyncRepository(
     private suspend fun updatePreview(chatId: String, message: String, at: String) =
         db.chats().updateLastMessage(chatId, localCrypto.protect(message) ?: "", at)
 
-    private fun previewFor(message: RemoteMessage): String = when {
-        message.deleted -> "تم حذف الرسالة"
-        message.type == "text" -> message.body
+    private fun previewFor(message: RemoteMessage, myUserId: String? = SessionStore(context).currentUserId): String = when {
+        message.deleted -> "تم حذف هذه الرسالة"
+        message.type == "call" -> callPreview(message, myUserId)
+        message.type == "text" -> if (message.decryptionFailed || message.body.startsWith("zce1:")) "رسالة" else message.body
+        message.type == "image" -> "📷 صورة"
+        message.type == "video" -> "🎥 فيديو"
+        message.type == "audio" -> "🎤 رسالة صوتية"
+        message.type == "sticker" -> "🖼️ ملصق"
+        message.type == "document" -> "📄 ${message.mediaName?.takeIf { it.isNotBlank() } ?: "مستند"}"
         else -> "📎 ${message.mediaName ?: message.body.ifBlank { "مرفق" }}"
+    }
+
+    private fun callPreview(message: RemoteMessage, myUserId: String?): String {
+        val o = runCatching { JSONObject(message.body) }.getOrNull() ?: return "📞 مكالمة"
+        val mode = o.optString("mode", "audio")
+        val status = o.optString("status", "ended")
+        val mine = !myUserId.isNullOrBlank() && message.senderId == myUserId
+        val icon = if (mode == "video") "📹" else "📞"
+        val kind = if (mode == "video") "مكالمة فيديو" else "مكالمة صوتية"
+        return when (status) {
+            "missed" -> if (mine) "$icon لم يتم الرد" else "$icon مكالمة فائتة"
+            "declined" -> if (mine) "$icon تم رفض المكالمة" else "$icon مكالمة مرفوضة"
+            else -> if (mine) "$icon $kind صادرة" else "$icon $kind واردة"
+        }
     }
 
     suspend fun clearLocal() {
@@ -88,18 +110,33 @@ class MessageSyncRepository(
 
     suspend fun refreshChats() {
         val arr = api.chats()
-        val items = (0 until arr.length()).map { i ->
-            val remote = parseChat(arr.getJSONObject(i))
-            if (remote.lastMessage == "🔒 رسالة مشفرة") {
-                val local = db.messages().latestForChat(remote.id)
-                val preview = local?.let {
-                    val body = localCrypto.reveal(it.body).orEmpty()
-                    val name = localCrypto.reveal(it.mediaName)
-                    if (it.type == "text") body else "📎 ${name ?: body}"
-                }
-                if (!preview.isNullOrBlank()) remote.copy(lastMessage = preview) else remote
-            } else remote
+        val baseItems = (0 until arr.length()).map { i -> parseChat(arr.getJSONObject(i)) }
+
+        // Cache chat identity first so direct-message decryption has the peer id available even
+        // immediately after a reinstall when the local Room database starts empty.
+        db.withTransaction {
+            db.chats().upsertAll(baseItems.map { it.toEntity(localCrypto) })
+            if (baseItems.isEmpty()) db.chats().clearAll() else db.chats().deleteMissing(baseItems.map { it.id })
         }
+
+        val myUserId = SessionStore(context).currentUserId
+        val items = baseItems.map { remote ->
+            val preview = remote.lastMessage.orEmpty()
+            val needsClientPreview = preview.isBlank() || preview == "🔒 رسالة مشفرة" || preview == "📞 مكالمة" || preview.startsWith("zce1:") || preview.contains("callId\"")
+            if (!needsClientPreview) return@map remote
+
+            val latest = runCatching { api.messages(remote.id, limit = 1) }.getOrNull()
+                ?.messages?.takeIf { it.length() > 0 }
+                ?.getJSONObject(0)
+                ?.let(::parseMessage)
+                ?.let { runCatching { decode(it) }.getOrElse { _ -> it.copy(body = "رسالة", decryptionFailed = true) } }
+            if (latest == null) remote.copy(lastMessage = null)
+            else {
+                db.messages().upsert(latest.toEntity(localCrypto))
+                remote.copy(lastMessage = previewFor(latest, myUserId), lastMessageAt = latest.createdAt)
+            }
+        }
+
         db.withTransaction {
             db.chats().upsertAll(items.map { it.toEntity(localCrypto) })
             if (items.isEmpty()) db.chats().clearAll() else db.chats().deleteMissing(items.map { it.id })
@@ -133,12 +170,23 @@ class MessageSyncRepository(
 
     suspend fun onEditedMessage(message: RemoteMessage) {
         val decoded = decode(message)
-        db.messages().upsert(decoded.toEntity(localCrypto))
-        updatePreview(decoded.chatId, previewFor(decoded), decoded.createdAt)
+        val existing = db.messages().byId(decoded.id)?.toRemote(localCrypto)
+        val merged = if (decoded.reactions.isEmpty() && existing != null) decoded.copy(reactions = existing.reactions) else decoded
+        db.messages().upsert(merged.toEntity(localCrypto))
+        updatePreview(merged.chatId, previewFor(merged), merged.createdAt)
     }
 
     suspend fun onDeletedMessage(messageId: String) {
         db.messages().markDeleted(messageId)
+    }
+
+    suspend fun applyReactionSnapshot(messageId: String, reactions: JSONArray) {
+        db.messages().updateReactions(messageId, reactions.toString())
+    }
+
+    suspend fun setReaction(chatId: String, messageId: String, emoji: String?) {
+        val result = if (emoji.isNullOrBlank()) api.removeReaction(chatId, messageId) else api.reactMessage(chatId, messageId, emoji)
+        applyReactionSnapshot(messageId, result.optJSONArray("reactions") ?: JSONArray())
     }
 
     suspend fun onReceipt(messageId: String, status: String) {
@@ -201,8 +249,9 @@ class MessageSyncRepository(
             parseMessage(api.editMessage(chatId, messageId, newBody, encrypted = false, cryptoVersion = 0))
         }
         val decoded = decode(remote)
-        db.messages().upsert(decoded.toEntity(localCrypto))
-        return decoded
+        val merged = if (decoded.reactions.isEmpty()) decoded.copy(reactions = local.toRemote(localCrypto).reactions) else decoded
+        db.messages().upsert(merged.toEntity(localCrypto))
+        return merged
     }
 
     suspend fun retry(clientId: String) {
@@ -249,13 +298,25 @@ class MessageSyncRepository(
             WorkManager.getInstance(context).enqueueUniqueWork("zoolchat-incoming-$chatId", ExistingWorkPolicy.REPLACE, request)
         }
 
+        private fun jsonStringOrNull(o: JSONObject, key: String): String? =
+            if (!o.has(key) || o.isNull(key)) null else o.optString(key).takeIf { it.isNotBlank() && !it.equals("null", true) }
+
+        private fun parseReactions(o: JSONObject): List<RemoteReaction> {
+            val arr = o.optJSONArray("reactions") ?: return emptyList()
+            return (0 until arr.length()).mapNotNull { i ->
+                val r = arr.optJSONObject(i) ?: return@mapNotNull null
+                val emoji = r.optString("emoji").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                RemoteReaction(emoji, r.optInt("count", 0).coerceAtLeast(0), r.optBoolean("reactedByMe", false))
+            }
+        }
+
         fun parseChat(o: JSONObject) = RemoteChat(
             o.getString("id"),
-            o.getString("type"),
-            o.getString("title"),
-            o.optString("peerUserId").takeIf { it.isNotBlank() },
-            o.optString("lastMessage").takeIf { it.isNotBlank() },
-            o.optString("lastMessageAt").takeIf { it.isNotBlank() },
+            jsonStringOrNull(o, "type") ?: "direct",
+            jsonStringOrNull(o, "title") ?: "محادثة",
+            jsonStringOrNull(o, "peerUserId"),
+            jsonStringOrNull(o, "lastMessage")?.takeUnless { it.startsWith("zce1:") || it == "🔒 رسالة مشفرة" },
+            jsonStringOrNull(o, "lastMessageAt"),
             o.optInt("unread", 0),
         )
 
@@ -263,19 +324,20 @@ class MessageSyncRepository(
             id = o.getString("id"),
             chatId = o.getString("chatId"),
             senderId = o.getString("senderId"),
-            type = o.optString("type", "text"),
-            body = o.optString("body"),
+            type = jsonStringOrNull(o, "type") ?: "text",
+            body = jsonStringOrNull(o, "body") ?: "",
             createdAt = o.getString("createdAt"),
-            editedAt = o.optString("editedAt").takeIf { it.isNotBlank() },
+            editedAt = jsonStringOrNull(o, "editedAt"),
             deleted = o.optBoolean("deleted", false),
-            status = o.optString("status", "sent"),
-            clientId = o.optString("clientId").takeIf { it.isNotBlank() },
-            mediaUrl = o.optJSONObject("media")?.optString("url")?.takeIf { it.isNotBlank() },
-            mediaMime = o.optJSONObject("media")?.optString("mime")?.takeIf { it.isNotBlank() },
-            mediaName = o.optJSONObject("media")?.optString("name")?.takeIf { it.isNotBlank() },
+            status = jsonStringOrNull(o, "status") ?: "sent",
+            clientId = jsonStringOrNull(o, "clientId"),
+            mediaUrl = o.optJSONObject("media")?.let { jsonStringOrNull(it, "url") },
+            mediaMime = o.optJSONObject("media")?.let { jsonStringOrNull(it, "mime") },
+            mediaName = o.optJSONObject("media")?.let { jsonStringOrNull(it, "name") },
             mediaSize = o.optJSONObject("media")?.optLong("size")?.takeIf { it > 0 },
             encrypted = o.optBoolean("encrypted", false) || o.optString("body").startsWith("zce1:"),
             cryptoVersion = o.optInt("cryptoVersion", if (o.optString("body").startsWith("zce1:")) 1 else 0),
+            reactions = parseReactions(o),
         )
     }
 }
@@ -424,5 +486,17 @@ class IncomingMessageSyncWorker(appContext: Context, params: WorkerParameters) :
 
 private fun CachedChatEntity.toRemote(local: LocalStorageCrypto) = RemoteChat(id, type, title, peerUserId, local.reveal(lastMessage), lastMessageAt, unread)
 private fun RemoteChat.toEntity(local: LocalStorageCrypto) = CachedChatEntity(id, type, title, peerUserId, local.protect(lastMessage), lastMessageAt, unread)
-private fun CachedMessageEntity.toRemote(local: LocalStorageCrypto) = RemoteMessage(id, chatId, senderId, type, local.reveal(body).orEmpty(), createdAt, editedAt, deleted, status, clientId, mediaUrl, mediaMime, local.reveal(mediaName), mediaSize, encrypted, cryptoVersion, decryptionFailed)
-fun RemoteMessage.toEntity(local: LocalStorageCrypto) = CachedMessageEntity(id, clientId, chatId, senderId, type, local.protect(body).orEmpty(), createdAt, status, editedAt, deleted, mediaUrl, mediaMime, local.protect(mediaName), mediaSize, encrypted, cryptoVersion, decryptionFailed)
+private fun reactionsFromJson(raw: String): List<RemoteReaction> = runCatching {
+    val arr = JSONArray(raw)
+    (0 until arr.length()).mapNotNull { i ->
+        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+        val emoji = o.optString("emoji").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        RemoteReaction(emoji, o.optInt("count", 0).coerceAtLeast(0), o.optBoolean("reactedByMe", false))
+    }
+}.getOrDefault(emptyList())
+private fun reactionsToJson(items: List<RemoteReaction>): String = JSONArray().apply {
+    items.forEach { r -> put(JSONObject().put("emoji", r.emoji).put("count", r.count).put("reactedByMe", r.reactedByMe)) }
+}.toString()
+
+private fun CachedMessageEntity.toRemote(local: LocalStorageCrypto) = RemoteMessage(id, chatId, senderId, type, local.reveal(body).orEmpty(), createdAt, editedAt, deleted, status, clientId, mediaUrl, mediaMime, local.reveal(mediaName), mediaSize, encrypted, cryptoVersion, decryptionFailed, reactionsFromJson(reactionsJson))
+fun RemoteMessage.toEntity(local: LocalStorageCrypto) = CachedMessageEntity(id, clientId, chatId, senderId, type, local.protect(body).orEmpty(), createdAt, status, editedAt, deleted, mediaUrl, mediaMime, local.protect(mediaName), mediaSize, encrypted, cryptoVersion, decryptionFailed, reactionsToJson(reactions))

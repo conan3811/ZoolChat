@@ -401,3 +401,15 @@ Ask ChatGPT to:
 - Direct-chat E2EE remains the supported encrypted-message scope. Group E2EE has NOT been implemented and must not be claimed as completed.
 - Remaining release acceptance is external/physical rather than missing application logic: (1) build the Firebase-enabled APK after secure secret injection; (2) two-real-phone audible call/routing test; (3) FCM foreground/background/locked-screen test; (4) real-device Login -> Chats and Registration -> success -> Chats UI acceptance; (5) production SMTP provider test after v0.32 deployment; (6) controlled production deployment only after those acceptance checks.
 - Automated implementation status is approximately 99%; release acceptance remains below 100% until the physical/external checks above pass.
+
+## v0.32 user-feedback round 2
+- Removed the broken second password prompt for encrypted-history protection. The password already entered during successful account authentication is used transiently to create/restore an encrypted E2EE identity backup; it is not persisted.
+- Added the previously missing `/api/e2ee/backup`, `/api/e2ee/self-key`, and password-verification backend handlers over migration 015 so automatic identity restore can actually work after reinstall for accounts whose identity backup exists.
+- Chat-list previews no longer expose ciphertext, `رسالة مشفرة`, raw call JSON, or stringified JSON nulls. Latest call/media events are rendered as user-facing descriptions (incoming/outgoing/missed/declined voice/video call, photo, video, voice note, document, sticker).
+- Fixed JSON-null parsing that made `editedAt` become the literal string `null`, which caused `تم التعديل` to appear on messages that were never edited.
+- Added long-press message actions inspired by WhatsApp: emoji reaction, edit for the sender within 15 minutes, and delete for everyone within two days. Group owners/admins may delete member messages within the same server-enforced two-day window.
+- Added durable one-reaction-per-user storage and aggregated reaction counts with realtime/FCM synchronization.
+- Replaced the tiny text settings glyph on the Chats header with the standard Material Settings icon at normal 48dp touch-target / 28dp glyph sizing.
+- Removed the persistent realtime foreground-service notification. Normal background message/call delivery now relies on Firebase Cloud Messaging; the WebSocket client stays process-scoped for realtime foreground/in-process updates. The call foreground service remains for active calls where Android requires it.
+- Validation now includes migration 016 and message-interaction/E2EE-backup integration coverage in addition to Android assemble/lint and the existing v0.32 test suite.
+- Security limitation remains explicit: ciphertext whose original identity private key was already destroyed before any encrypted backup existed cannot be mathematically recovered. This change prevents that loss for future reinstalls once the automatic backup has been created during password authentication, without weakening E2EE by giving the server a plaintext private key.

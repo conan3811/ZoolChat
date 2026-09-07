@@ -148,6 +148,11 @@ class ApiClient(
     ).getJSONObject("message")
 
     suspend fun deleteMessage(chatId: String, messageId: String) = delete("/api/chats/$chatId/messages/$messageId")
+    suspend fun reactMessage(chatId: String, messageId: String, emoji: String): JSONObject = put(
+        "/api/chats/$chatId/messages/$messageId/reaction",
+        JSONObject().put("emoji", emoji),
+    )
+    suspend fun removeReaction(chatId: String, messageId: String): JSONObject = delete("/api/chats/$chatId/messages/$messageId/reaction")
     suspend fun markDelivered(chatId: String, messageId: String) = post("/api/chats/$chatId/delivered", JSONObject().put("messageId", messageId))
     suspend fun markRead(chatId: String, messageId: String) = post("/api/chats/$chatId/read", JSONObject().put("messageId", messageId))
 

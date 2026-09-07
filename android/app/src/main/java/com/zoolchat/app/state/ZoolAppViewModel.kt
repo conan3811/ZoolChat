@@ -21,7 +21,7 @@ import com.zoolchat.app.data.RemoteMessage
 import com.zoolchat.app.data.RemotePresence
 import com.zoolchat.app.network.ApiClient
 import com.zoolchat.app.realtime.RealtimeEventBus
-import com.zoolchat.app.realtime.RealtimeForegroundService
+import com.zoolchat.app.realtime.RealtimeClient
 import com.zoolchat.app.sync.MessageSyncRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,6 +63,7 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
     val error: StateFlow<String?> = _error
 
     private val messageCollectors = mutableMapOf<String, Job>()
+    private var realtimeClient: RealtimeClient? = null
 
     val isAuthenticated: Boolean get() = auth.signedIn
     val firebaseConfigured: Boolean get() = auth.firebaseConfigured
@@ -86,12 +87,19 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
                 session.localDisplayName = user.getString("displayName")
                 session.currentUserId = user.getString("id")
                 runCatching { e2ee.registerLocalKey() }.onFailure { _error.value = "تعذر تسجيل مفتاح التشفير: ${it.message}" }
-                RealtimeForegroundService.start(getApplication())
+                startRealtime()
                 sync.refreshChats()
                 refreshCallHistoryInternal()
                 MessageSyncRepository.scheduleSend(getApplication())
                 registerFcmIfAvailable()
             }.onFailure { _error.value = it.message }
+        }
+    }
+
+    private fun startRealtime() {
+        if (realtimeClient != null) return
+        realtimeClient = RealtimeClient(api.http, auth, session) { event -> RealtimeEventBus.emit(event) }.also {
+            it.connect(api.baseUrl)
         }
     }
 
@@ -246,14 +254,20 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun editMessage(chatId: String, messageId: String, body: String) {
         viewModelScope.launch {
-            runCatching { sync.editMessage(chatId, messageId, body) }.onFailure { _error.value = it.message }
+            runCatching { sync.editMessage(chatId, messageId, body); sync.refreshChats() }.onFailure { _error.value = it.message }
         }
     }
 
     fun deleteMessage(chatId: String, messageId: String) {
         viewModelScope.launch {
-            runCatching { api.deleteMessage(chatId, messageId); sync.onDeletedMessage(messageId) }
+            runCatching { api.deleteMessage(chatId, messageId); sync.onDeletedMessage(messageId); sync.refreshChats() }
                 .onFailure { _error.value = it.message }
+        }
+    }
+
+    fun reactMessage(chatId: String, messageId: String, emoji: String?) {
+        viewModelScope.launch {
+            runCatching { sync.setReaction(chatId, messageId, emoji) }.onFailure { _error.value = it.message }
         }
     }
 
@@ -277,6 +291,16 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
             "message.deleted" -> {
                 val d = event.getJSONObject("data")
                 viewModelScope.launch { sync.onDeletedMessage(d.getString("messageId")); sync.refreshChats() }
+            }
+            "message.reaction" -> {
+                val d = event.getJSONObject("data")
+                val chatId = d.getString("chatId")
+                viewModelScope.launch {
+                    runCatching {
+                        val result = sync.refreshMessages(chatId)
+                        _hasMoreMessages.value = _hasMoreMessages.value + (chatId to result.hasMore)
+                    }.onFailure { _error.value = it.message }
+                }
             }
             "receipt.update" -> {
                 val d = event.getJSONObject("data")
@@ -320,7 +344,8 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun clearSignedInState(clearCryptoIdentity: Boolean) {
-        RealtimeForegroundService.stop(getApplication())
+        realtimeClient?.close()
+        realtimeClient = null
         messageCollectors.values.forEach { it.cancel() }
         messageCollectors.clear()
         runCatching { sync.clearLocal() }
@@ -358,6 +383,8 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearError() { _error.value = null }
     override fun onCleared() {
+        realtimeClient?.close()
+        realtimeClient = null
         messageCollectors.values.forEach { it.cancel() }
         super.onCleared()
     }

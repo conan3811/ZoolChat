@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -37,6 +38,8 @@ import com.zoolchat.app.ui.components.Avatar
 import com.zoolchat.app.ui.i18n.t
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Duration
+import java.time.Instant
 
 private val Blue = Color(0xFF53BDEB)
 private val Bright = Color(0xFF25D366)
@@ -58,6 +61,9 @@ fun ProductionChatScreen(
     onSend: (String) -> Unit,
     onSendMedia: (Uri, String, String) -> Unit,
     onRetry: (String) -> Unit,
+    onEditMessage: (String, String) -> Unit,
+    onDeleteForEveryone: (String) -> Unit,
+    onReact: (String, String?) -> Unit,
     onMarkRead: () -> Unit,
     peerPresence: RemotePresence?,
     peerTyping: Boolean,
@@ -88,6 +94,10 @@ fun ProductionChatScreen(
     var showSecurity by remember { mutableStateOf(false) }
     var peerFingerprint by remember { mutableStateOf<String?>(null) }
     var typingSent by remember { mutableStateOf(false) }
+    var selectedMessage by remember { mutableStateOf<RemoteMessage?>(null) }
+    var editingMessage by remember { mutableStateOf<RemoteMessage?>(null) }
+    var deleteCandidate by remember { mutableStateOf<RemoteMessage?>(null) }
+    var canAdminDelete by remember(chatId) { mutableStateOf(false) }
 
     fun setMute(until: Long) {
         muteUntil = until
@@ -100,6 +110,11 @@ fun ProductionChatScreen(
         if (peerUserId != null) {
             while (true) { onRefreshPresence(); delay(15_000) }
         }
+    }
+    LaunchedEffect(isGroup, chatId) {
+        canAdminDelete = if (!isGroup) false else runCatching {
+            api.groupInfo(chatId).optString("myRole") in setOf("owner", "admin")
+        }.getOrDefault(false)
     }
     LaunchedEffect(text) {
         if (text.isBlank()) {
@@ -197,6 +212,55 @@ fun ProductionChatScreen(
         )
     }
 
+    selectedMessage?.let { selected ->
+        val mine = selected.senderId == myUserId
+        val age = runCatching { Duration.between(Instant.parse(selected.createdAt), Instant.now()) }.getOrDefault(Duration.ofDays(999))
+        val canEdit = mine && selected.type == "text" && !selected.deleted && !selected.decryptionFailed && age <= Duration.ofMinutes(15)
+        val canDelete = !selected.deleted && age <= Duration.ofDays(2) && (mine || canAdminDelete)
+        val myReaction = selected.reactions.firstOrNull { it.reactedByMe }?.emoji
+        ModalBottomSheet(onDismissRequest = { selectedMessage = null }) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    listOf("👍","❤️","😂","😮","😢","🙏").forEach { emoji ->
+                        TextButton(onClick = { onReact(selected.id, if (myReaction == emoji) null else emoji); selectedMessage = null }, contentPadding = PaddingValues(4.dp), modifier = Modifier.size(48.dp)) {
+                            Text(emoji, fontSize = 25.sp)
+                        }
+                    }
+                }
+                HorizontalDivider()
+                if (canEdit) {
+                    ListItem(
+                        headlineContent = { Text(t("تعديل")) },
+                        leadingContent = { Icon(Icons.Rounded.Edit, null) },
+                        modifier = Modifier.clickable { editingMessage = selected; text = selected.body; selectedMessage = null },
+                    )
+                }
+                if (canDelete) {
+                    ListItem(
+                        headlineContent = { Text(t("حذف لدى الجميع"), color = MaterialTheme.colorScheme.error) },
+                        supportingContent = { if (!mine) Text(t("متاح لمشرفي المجموعة")) },
+                        leadingContent = { Icon(Icons.Rounded.DeleteForever, null, tint = MaterialTheme.colorScheme.error) },
+                        modifier = Modifier.clickable { deleteCandidate = selected; selectedMessage = null },
+                    )
+                }
+                if (!canEdit && mine && selected.type == "text" && age > Duration.ofMinutes(15)) {
+                    Text(t("انتهت مهلة تعديل الرسالة"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+
+    deleteCandidate?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            title = { Text(t("حذف الرسالة؟")) },
+            text = { Text(t("سيتم استبدال الرسالة لدى جميع المشاركين بعبارة تفيد بأنها حُذفت.")) },
+            confirmButton = { TextButton(onClick = { onDeleteForEveryone(candidate.id); deleteCandidate = null }) { Text(t("حذف لدى الجميع"), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text(t("إلغاء")) } },
+        )
+    }
+
     if(showSecurity && !isGroup){
         LaunchedEffect(showSecurity,peerUserId){ if(peerUserId!=null) peerFingerprint=runCatching{e2ee.peerFingerprint(peerUserId)}.getOrNull() }
         AlertDialog(onDismissRequest={showSecurity=false},title={Text(t("التشفير ورمز الأمان"))},text={Column{Text(t("هذه المحادثة تستخدم E2EE beta مباشر بين الجهازين."));Spacer(Modifier.height(10.dp));Text(t("بصمة جهازك:"),fontWeight=FontWeight.Bold);Text(e2ee.localFingerprint(),style=MaterialTheme.typography.bodySmall);Spacer(Modifier.height(10.dp));Text(t("بصمة الطرف الآخر:"),fontWeight=FontWeight.Bold);Text(peerFingerprint?:t("جاري التحميل…"),style=MaterialTheme.typography.bodySmall);if(peerUserId!=null&&e2ee.peerKeyChanged(peerUserId)){Spacer(Modifier.height(10.dp));Text(t("⚠ تغيّر مفتاح الطرف الآخر. تحقق من البصمة قبل متابعة المحادثة الحساسة."),color=MaterialTheme.colorScheme.error)}}},confirmButton={TextButton(onClick={peerUserId?.let{e2ee.acknowledgePeerKey(it)};showSecurity=false}){Text(t("تم"))}})
@@ -286,7 +350,7 @@ fun ProductionChatScreen(
             items(visibleMessages,key={it.id}) { m ->
                 val mine=m.senderId==myUserId
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=if(mine)Arrangement.Start else Arrangement.End) {
-                    Surface(shape=RoundedCornerShape(14.dp),color=if(mine)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=310.dp)) {
+                    Surface(shape=RoundedCornerShape(14.dp),color=if(mine)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=310.dp).combinedClickable(onClick = {}, onLongClick = { if (!m.deleted && !m.id.startsWith("local:")) selectedMessage = m })) {
                         Column(Modifier.padding(horizontal=10.dp,vertical=7.dp)) {
                             if(isGroup) TextButton(onClick={onMember(m.senderId)}) { Text(if(mine)t("أنت") else t("عرض العضو")) }
                             if (m.deleted) {
@@ -298,6 +362,19 @@ fun ProductionChatScreen(
                             } else if (m.type=="call") CallEventBubble(m, mine)
                             else if (m.type=="text") Text(m.body,color=if(m.decryptionFailed) Color(0xFFFF8A80) else MaterialTheme.colorScheme.onSurface)
                             else MediaBubble(m,mediaRepo)
+                            if (m.reactions.isNotEmpty() && !m.deleted) {
+                                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    m.reactions.take(5).forEach { reaction ->
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (reaction.reactedByMe) MaterialTheme.colorScheme.primary.copy(alpha=.18f) else MaterialTheme.colorScheme.surface,
+                                            modifier = Modifier.clickable { onReact(m.id, if (reaction.reactedByMe) null else reaction.emoji) },
+                                        ) {
+                                            Text("${reaction.emoji} ${reaction.count}", modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            }
                             Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically) {
                                 if (m.editedAt != null && !m.deleted) {
                                     Text(t("تم التعديل • "), color=MaterialTheme.colorScheme.onSurface.copy(alpha=.6f), style = MaterialTheme.typography.labelSmall)
@@ -320,6 +397,14 @@ fun ProductionChatScreen(
         }
 
         if(recording) Text(t("● جاري تسجيل رسالة صوتية — اضغط زر الميكروفون للإرسال"),color=Color.White,modifier=Modifier.fillMaxWidth().background(Color(0xFF7A1F1F)).padding(8.dp),style=MaterialTheme.typography.bodySmall)
+        editingMessage?.let { editing ->
+            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Column(Modifier.weight(1f)) { Text(t("تعديل الرسالة"), fontWeight = FontWeight.SemiBold); Text(editing.body, maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                IconButton(onClick = { editingMessage = null; text = "" }) { Icon(Icons.Rounded.Close, t("إلغاء")) }
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(7.dp).navigationBarsPadding(),verticalAlignment=Alignment.Bottom) {
             Surface(Modifier.weight(1f),shape=RoundedCornerShape(26.dp),color=MaterialTheme.colorScheme.surfaceVariant) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
@@ -337,7 +422,7 @@ fun ProductionChatScreen(
             Spacer(Modifier.width(6.dp))
             FilledIconButton(
                 onClick={
-                    if(text.isNotBlank()){onSend(text);text="";if(typingSent){onTypingChanged(false);typingSent=false}}
+                    if(text.isNotBlank()){val clean=text.trim();val editing=editingMessage;if(editing!=null){onEditMessage(editing.id,clean);editingMessage=null}else onSend(clean);text="";if(typingSent){onTypingChanged(false);typingSent=false}}
                     else if(!recording){recorder.start().onSuccess{recording=true}}
                     else{recorder.stop().onSuccess{file->recording=false;onSendMedia(Uri.fromFile(file),"audio/mp4","رسالة صوتية.m4a")}.onFailure{recording=false}}
                 },

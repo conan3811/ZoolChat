@@ -7,6 +7,7 @@ import android.util.Base64
 import com.zoolchat.app.auth.SessionStore
 import com.zoolchat.app.network.ApiClient
 import com.zoolchat.app.network.ApiException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
@@ -190,10 +191,19 @@ class E2eeManager(
 
     suspend fun backupRequired():Boolean = loadIdentityOrNull()!=null && remoteBackupOrNull()==null
 
+    private suspend fun uploadBackupWithRetry(kp: KeyPair, password: String): Boolean {
+        repeat(3) { attempt ->
+            val ok = runCatching { api.put("/api/e2ee/backup", encryptedBackupBody(kp, password)); true }.getOrDefault(false)
+            if (ok) return true
+            delay(250L * (attempt + 1))
+        }
+        return false
+    }
+
     suspend fun backupCurrentIdentityWithVerifiedPassword(password:String) {
         api.post("/api/me/password/verify",JSONObject().put("password",password))
         val kp=loadIdentityOrNull() ?: error("local_e2ee_identity_missing")
-        api.put("/api/e2ee/backup",encryptedBackupBody(kp,password))
+        check(uploadBackupWithRetry(kp,password)){"e2ee_backup_upload_failed"}
     }
 
     /**
@@ -203,7 +213,7 @@ class E2eeManager(
      */
     suspend fun prepareIdentityAfterPasswordAuth(password:String):Boolean {
         loadIdentityOrNull()?.let { local ->
-            return runCatching { api.put("/api/e2ee/backup",encryptedBackupBody(local,password));true }.getOrDefault(false)
+            return uploadBackupWithRetry(local,password)
         }
         val backup=remoteBackupOrNull()
         if(backup!=null){
@@ -221,7 +231,7 @@ class E2eeManager(
             return false
         }
         val fresh=generateIdentity()
-        return runCatching { api.put("/api/e2ee/backup",encryptedBackupBody(fresh,password));true }.getOrDefault(false)
+        return uploadBackupWithRetry(fresh,password)
     }
 
     private suspend fun peerKey(userId:String,force:Boolean=false):PeerKey=mutex.withLock {
