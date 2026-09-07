@@ -20,53 +20,32 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          e2ee = Path('android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt')
-          s = e2ee.read_text()
-          old = '''    /**
-           * Called immediately after password authentication and before bootstrap publishes any key.
-           * Returns false only when an older server identity exists but no decryptable backup is
-           * available; in that case the client deliberately refuses to silently rotate the key.
-           */
-          suspend fun prepareIdentityAfterPasswordAuth(password:String):Boolean {
-              loadIdentityOrNull()?.let { local ->
-                  return uploadBackupWithRetry(local,password)
-              }
-              val backup=remoteBackupOrNull()
-              if(backup!=null){
-                  return runCatching {
-                      val restored=restoreBackup(backup,password)
-                      persistIdentity(restored)
-                      true
-                  }.getOrElse {
-                      prefs.edit().putBoolean(recoveryBlockedPref(),true).apply()
-                      false
-                  }
-              }
-              if(serverIdentityExists()){
-                  prefs.edit().putBoolean(recoveryBlockedPref(),true).apply()
-                  return false
-              }
-              val fresh=generateIdentity()
-              return uploadBackupWithRetry(fresh,password)
-          }
-          '''
-          new = '''    /**
+          def replace_between(path, start_marker, end_marker, replacement):
+              p = Path(path)
+              s = p.read_text()
+              start = s.find(start_marker)
+              if start < 0:
+                  raise SystemExit(f'start marker not found in {path}')
+              end = s.find(end_marker, start)
+              if end < 0:
+                  raise SystemExit(f'end marker not found in {path}')
+              p.write_text(s[:start] + replacement + s[end:])
+
+          e2ee_block = '''    /**
            * Called immediately after a successful password authentication and before bootstrap.
            *
            * Older ZoolChat builds could leave an account with a server public key but without a
-           * decryptable private-key backup. That state is already unrecoverable for old ciphertext,
-           * and the previous client then blocked every new direct message and every call with
-           * e2ee_identity_recovery_required. Because this method is reached only after the account
-           * password has just been accepted by the backend, it is safe to rotate that orphaned
-           * identity to a fresh client key, publish it, and create a new encrypted backup.
+           * decryptable private-key backup. That historical private key is already unrecoverable,
+           * and blocking identity rotation made both every new direct message and every call fail.
+           * After the backend has accepted the account password, the client can safely restore the
+           * encrypted backup or rotate an orphaned identity to a fresh client key.
            *
-           * The rotation cannot restore ciphertext encrypted to a destroyed historical private key;
-           * it only guarantees that new messages and calls become functional again.
+           * Rotation cannot restore ciphertext encrypted to a destroyed historical private key; it
+           * restores reliable encryption for all new messages and calls without giving the server a
+           * plaintext private key.
            */
           suspend fun prepareIdentityAfterPasswordAuth(password:String):Boolean {
               loadIdentityOrNull()?.let { local ->
-                  // Re-publish the current key in case the server record was lost, then best-effort
-                  // refresh the encrypted backup. A temporary backup failure must not disable chat.
                   api.putE2eeKey(b64(local.public.encoded),fingerprint(local.public.encoded))
                   uploadBackupWithRetry(local,password)
                   prefs.edit().putBoolean(recoveryBlockedPref(),false).apply()
@@ -82,8 +61,6 @@ jobs:
                       prefs.edit().putBoolean(recoveryBlockedPref(),false).apply()
                       return true
                   }
-                  // The authenticated password no longer decrypts the historical backup (for example
-                  // after a password reset). The old private key cannot be recovered, so rotate below.
               } else if(!serverIdentityExists()) {
                   val fresh=generateIdentity()
                   api.putE2eeKey(b64(fresh.public.encoded),fingerprint(fresh.public.encoded))
@@ -91,9 +68,8 @@ jobs:
                   return true
               }
 
-              // Orphaned/mismatched historical identity: clear only this account's local identity
-              // material, generate a fresh key after verified password authentication, and replace the
-              // server public key. Peers will detect the fingerprint change on their next refresh.
+              // Existing public key without a usable private key/backup: the old history cannot be
+              // recovered. Rotate only after successful password authentication so future traffic works.
               prefs.edit().remove(pubKeyPref()).remove(privKeyPref()).putBoolean(recoveryBlockedPref(),false).apply()
               runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(vaultAlias()) }
               val fresh=generateIdentity()
@@ -101,45 +77,24 @@ jobs:
               uploadBackupWithRetry(fresh,password)
               return true
           }
-          '''
-          if old not in s:
-              raise SystemExit('E2EE source block changed; refusing blind patch')
-          e2ee.write_text(s.replace(old, new))
 
-          app = Path('android/app/src/main/java/com/zoolchat/app/ZoolChatApp.kt')
-          s = app.read_text()
-          old = '''        val vm: ZoolAppViewModel = viewModel()
-                  val authScope = rememberCoroutineScope()
-                  var authenticated by remember { mutableStateOf(vm.isAuthenticated) }
-                  var profileSetupPending by remember { mutableStateOf(vm.session.initialProfileSetupPending) }
-
-                  if (!authenticated) {
-                      PhoneAuthScreen(vm.auth,vm.session) {
-                          val password=RecentAuthSecret.consume()
-                          if(password==null){
-                              authenticated = vm.isAuthenticated
-                              profileSetupPending = vm.session.initialProfileSetupPending
-                          } else {
-                              authScope.launch {
-                                  runCatching { vm.e2ee.prepareIdentityAfterPasswordAuth(password) }
-                                  authenticated = vm.isAuthenticated
-                                  profileSetupPending = vm.session.initialProfileSetupPending
-                              }
-                          }
-                      }
-                      return@CompositionLocalProvider
-                  }
           '''
-          new = '''        val vm: ZoolAppViewModel = viewModel()
+          replace_between(
+              'android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt',
+              '    /**\n     * Called immediately after password authentication',
+              '    private suspend fun peerKey',
+              e2ee_block,
+          )
+
+          app_block = '''        val vm: ZoolAppViewModel = viewModel()
                   val authScope = rememberCoroutineScope()
                   var authenticated by remember { mutableStateOf(vm.isAuthenticated) }
                   var profileSetupPending by remember { mutableStateOf(vm.session.initialProfileSetupPending) }
                   var sessionIdentityChecked by remember { mutableStateOf(!vm.isAuthenticated || vm.e2ee.hasLocalIdentity()) }
 
-                  // A session left by an older/broken build can be authenticated while its private E2EE
-                  // identity is no longer usable. Do not let that stale session enter Chats, where every
-                  // direct message/call would fail. Re-authentication gives prepareIdentityAfterPasswordAuth
-                  // the verified password it needs to restore or safely rotate the identity.
+                  // Never enter Chats with a stale authenticated session whose local E2EE private
+                  // identity is gone. Re-authentication provides the verified password required to
+                  // restore the encrypted backup or safely rotate an unrecoverable legacy identity.
                   LaunchedEffect(Unit) {
                       if (vm.isAuthenticated && !vm.e2ee.hasLocalIdentity()) {
                           vm.auth.signOut()
@@ -178,10 +133,14 @@ jobs:
                       }
                       return@CompositionLocalProvider
                   }
+
           '''
-          if old not in s:
-              raise SystemExit('App auth source block changed; refusing blind patch')
-          app.write_text(s.replace(old, new))
+          replace_between(
+              'android/app/src/main/java/com/zoolchat/app/ZoolChatApp.kt',
+              '        val vm: ZoolAppViewModel = viewModel()',
+              '        if (profileSetupPending) {',
+              app_block,
+          )
           PY
       - name: Commit repaired source
         shell: bash
