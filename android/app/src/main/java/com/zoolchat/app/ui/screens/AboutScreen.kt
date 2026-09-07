@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.zoolchat.app.BuildConfig
 import com.zoolchat.app.ui.i18n.t
 
 @Composable
@@ -28,7 +29,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 Icon(Icons.Rounded.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
                 Spacer(Modifier.height(14.dp))
                 Text("ZoolChat", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("v0.26 Beta", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("v${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(28.dp))
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
