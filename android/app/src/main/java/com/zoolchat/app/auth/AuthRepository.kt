@@ -73,7 +73,6 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
             val parts = ip.split('.')
             if (parts.size != 4) continue
             val prefix = parts.take(3).joinToString(".")
-            // Common development hosts first, then the rest of the local /24.
             listOf(1, 10, 2, 20, 100, 200).forEach { candidates += "http://$prefix.$it:8080" }
             for (host in 1..254) candidates += "http://$prefix.$host:8080"
         }
@@ -157,6 +156,7 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
         require(password.length in 8..128) { "كلمة المرور يجب أن تكون 8 أحرف على الأقل" }
         val response=authPost("/api/auth/register",JSONObject().put("email",e).put("password",password).put("phoneE164",normalizePhone(phone)).put("deviceName",deviceName()))
         saveSession(response)
+        RecentAuthSecret.put(password)
     }
     suspend fun requestPasswordCode(email: String): Result<Unit> = runCatching {
         authPost("/api/auth/password/request",JSONObject().put("email",email.trim().lowercase())); Unit
@@ -171,6 +171,7 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
         require(newPassword.length in 8..128) { "كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل" }
         val response=authPost("/api/auth/recover",JSONObject().put("username",u).put("recoveryCode",recoveryCode.trim()).put("newPassword",newPassword).put("deviceName",deviceName()))
         saveSession(response,u)
+        RecentAuthSecret.put(newPassword)
         response.getString("recoveryCode")
     }
 
@@ -180,6 +181,7 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
         require(password.length >= 8) { "كلمة المرور غير صحيحة" }
         val o = authPost("/api/auth/login", JSONObject().put("identifier", id).put("password", password).put("deviceName", deviceName()))
         saveSession(o)
+        RecentAuthSecret.put(password)
     }
 
     suspend fun testBackend(): Result<String> = runCatching { withContext(Dispatchers.IO) {
@@ -198,9 +200,7 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
             val o=authPost("/api/auth/refresh",JSONObject().put("refreshToken",refresh).put("deviceName",deviceName()))
             saveSession(o,sessionStore.accountUsername)
             true
-        }.getOrElse { error ->
-            // A temporary network/server failure must never throw the user back to Login.
-            // Keep the locally stored session and retry when connectivity returns.
+        }.getOrElse {
             sessionStore.accessToken = previousAccess
             sessionStore.refreshToken = refresh
             sessionStore.accessTokenExpiresAtMs = previousExpiry
@@ -226,6 +226,7 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
     }
 
     suspend fun signOut() {
+        RecentAuthSecret.clear()
         val refresh=sessionStore.refreshToken
         if(refresh!=null) runCatching { authPost("/api/auth/logout",JSONObject().put("refreshToken",refresh)) }
         sessionStore.clearFreeAuth(); sessionStore.clearDevIdentity()
