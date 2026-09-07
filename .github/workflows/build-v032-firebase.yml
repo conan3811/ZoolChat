@@ -4,6 +4,8 @@ on:
   push:
     branches: [ zoolchat-v0.32-development ]
     paths:
+      - 'android/**'
+      - 'cloud/API_BASE_URL.txt'
       - '.github/workflows/build-v032-firebase.yml'
 permissions:
   contents: read
@@ -56,4 +58,4 @@ jobs:
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
 
-# Final Firebase build trigger after the v0.32 account, search, mute, story and E2EE fixes passed validation.
+# Firebase acceptance builds now follow Android source changes on the v0.32 development branch.
