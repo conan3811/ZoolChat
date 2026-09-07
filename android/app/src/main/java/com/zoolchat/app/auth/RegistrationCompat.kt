@@ -17,11 +17,10 @@ import java.util.concurrent.TimeUnit
  * Temporary registration compatibility for the still-live v0.31 backend.
  *
  * v0.32 intentionally does not ask the user for a username during registration. The v0.32
- * backend accepts username as optional, while the existing v0.31 production endpoint can still
- * reject the new payload because it expects the historical username field. We first use the real
- * v0.32 request. Only when that request is rejected as invalid AND /health confirms v0.31 do we
- * retry with a random, non-personal compatibility username. Nothing is derived from the user's
- * email or phone number.
+ * backend accepts username as optional, while an older production endpoint can still reject the
+ * new payload because it expects the historical username field. We first use the real v0.32
+ * request. Only when that request is rejected as invalid AND /health confirms v0.31 do we retry
+ * with a random, non-personal compatibility username. Nothing is derived from email or phone.
  */
 private const val LEGACY_TEMP_USERNAME_PREFIX = "zc_tmp_"
 
@@ -73,7 +72,6 @@ private fun persistCompatibilitySession(session: SessionStore, payload: JSONObje
         ?.takeIf { it.isNotBlank() && it != "null" }
         ?.let { session.localDisplayName = it }
 
-    // Never expose the random compatibility identifier as the user's chosen username in-app.
     val returnedUsername = user?.optString("username").orEmpty()
     session.accountUsername = returnedUsername
         .takeIf { it.isNotBlank() && !it.startsWith(LEGACY_TEMP_USERNAME_PREFIX) }
@@ -95,10 +93,8 @@ suspend fun registerAccountCompatible(
     }
 
     val primaryError = primary.exceptionOrNull()
-    // Local validation errors and meaningful server errors should be shown directly.
     if (primaryError?.message != "تحقق من البيانات المدخلة") return primary
 
-    // Do not use the compatibility path once the live backend is v0.32+.
     val version = backendVersion(auth)
     if (version?.startsWith("0.31.") != true && version != "0.31") return primary
 
@@ -131,6 +127,7 @@ suspend fun registerAccountCompatible(
             }
         }
         persistCompatibilitySession(session, responsePayload)
+        RecentAuthSecret.put(password)
         session.initialProfileSetupPending = true
     }
 }
