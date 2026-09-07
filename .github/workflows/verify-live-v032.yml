@@ -45,3 +45,4 @@ jobs:
             exit 1
           fi
           echo "Live v0.32 health and Status route verified"
+# rollout verification refreshed after search/contact/call fixes
