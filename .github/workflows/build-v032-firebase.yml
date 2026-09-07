@@ -58,4 +58,4 @@ jobs:
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
 
-# Firebase acceptance builds now follow Android source changes on the v0.32 development branch.
+# Triggered after secure E2EE identity recovery fix for messages and calls.
