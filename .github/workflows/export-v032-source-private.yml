@@ -1,0 +1,27 @@
+name: Export private ZoolChat v0.32 source
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths: ['.github/workflows/export-v032-source-private.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+      - name: Package source without secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f android/app/google-services.json
+          test ! -e android/app/google-services.json
+          tar --exclude='.git' --exclude='**/build' --exclude='**/.gradle' --exclude='**/node_modules' -czf /tmp/zoolchat-v032-source.tar.gz android server cloud scripts docs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-v032-source-private
+          path: /tmp/zoolchat-v032-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
