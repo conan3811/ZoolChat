@@ -31,3 +31,4 @@ jobs:
           name: ZoolChat-v032-latest-no-firebase
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
+# refreshed for fixed contacts/search/call and Saudi +966 build
