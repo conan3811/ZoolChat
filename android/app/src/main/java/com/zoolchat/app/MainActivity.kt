@@ -8,7 +8,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.imePadding
@@ -29,14 +28,6 @@ class MainActivity : ComponentActivity() {
     private var incomingCall by mutableStateOf<IncomingCallNav?>(null)
     private var openChatId by mutableStateOf<String?>(null)
     private var sessionPrefs: SharedPreferences? = null
-
-    private val contactsPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        val session = SessionStore(this)
-        session.contactsExplained = true
-        // ZoolChatApp performs contact discovery during authenticated bootstrap. Recreate once
-        // after the permission is granted so discovery runs immediately with READ_CONTACTS access.
-        if (granted && !isFinishing) recreate()
-    }
 
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "current_user_id" || key == "access_token") maybeRequestContactsPermission()
@@ -62,12 +53,24 @@ class MainActivity : ComponentActivity() {
     private fun maybeRequestContactsPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) return
         val session = SessionStore(this)
-        if (session.contactsExplained) return
         if (!AuthRepository(this, session).signedIn) return
-        // Mark before launching so a denial is respected and the system dialog is not shown on
-        // every launch. A granted result recreates the activity and immediately re-runs discovery.
+
+        // Use a versioned one-shot flag so existing v0.32 users also receive the permission request
+        // after this update, even if an older contacts-explanation flag was already set.
+        val prefs = getSharedPreferences("zoolchat_preferences", MODE_PRIVATE)
+        if (prefs.getBoolean(CONTACTS_PERMISSION_V032_ASKED, false)) return
+        prefs.edit().putBoolean(CONTACTS_PERMISSION_V032_ASKED, true).apply()
         session.contactsExplained = true
-        contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+        requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_CONTACTS)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CONTACTS && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !isFinishing) {
+            // Authenticated bootstrap calls discoverContacts(); recreate once so it runs immediately
+            // with READ_CONTACTS already granted and populates matching ZoolChat users.
+            recreate()
+        }
     }
 
     override fun onResume() { super.onResume(); com.zoolchat.app.notifications.ConversationVisibility.foreground = true }
@@ -85,5 +88,10 @@ class MainActivity : ComponentActivity() {
         if (!id.isNullOrBlank()) incomingCall = IncomingCallNav(id, intent.getBooleanExtra("incoming_call_video", false), intent.getBooleanExtra("incoming_call_accept", false))
         if(intent?.getBooleanExtra("open_meet",false)==true)openChatId="__meet__"
         val chat = intent?.getStringExtra("open_chat_id"); if (!chat.isNullOrBlank()) openChatId = chat
+    }
+
+    private companion object {
+        const val REQUEST_CONTACTS = 3201
+        const val CONTACTS_PERMISSION_V032_ASKED = "contacts_permission_v032_asked"
     }
 }
