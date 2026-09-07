@@ -1,0 +1,33 @@
+name: Build ZoolChat v0.32 Android artifact
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - '.github/workflows/build-v032-fast-no-firebase.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Assemble v0.32 public debug APK
+        working-directory: android
+        run: gradle :app:assemblePublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-v032-latest-no-firebase
+          path: android/app/build/outputs/apk/public/debug/*.apk
+          if-no-files-found: error
