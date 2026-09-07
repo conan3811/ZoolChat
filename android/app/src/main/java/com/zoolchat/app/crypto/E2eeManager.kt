@@ -207,32 +207,51 @@ class E2eeManager(
     }
 
     /**
-     * Called immediately after password authentication and before bootstrap publishes any key.
-     * Returns false only when an older server identity exists but no decryptable backup is
-     * available; in that case the client deliberately refuses to silently rotate the key.
-     */
-    suspend fun prepareIdentityAfterPasswordAuth(password:String):Boolean {
-        loadIdentityOrNull()?.let { local ->
-            return uploadBackupWithRetry(local,password)
-        }
-        val backup=remoteBackupOrNull()
-        if(backup!=null){
-            return runCatching {
-                val restored=restoreBackup(backup,password)
-                persistIdentity(restored)
-                true
-            }.getOrElse {
-                prefs.edit().putBoolean(recoveryBlockedPref(),true).apply()
-                false
-            }
-        }
-        if(serverIdentityExists()){
-            prefs.edit().putBoolean(recoveryBlockedPref(),true).apply()
-            return false
-        }
-        val fresh=generateIdentity()
-        return uploadBackupWithRetry(fresh,password)
+ * Called immediately after a successful password authentication and before bootstrap.
+ *
+ * Older ZoolChat builds could leave an account with a server public key but without a
+ * decryptable private-key backup. That historical private key is already unrecoverable,
+ * and blocking identity rotation made both every new direct message and every call fail.
+ * After the backend has accepted the account password, the client can safely restore the
+ * encrypted backup or rotate an orphaned identity to a fresh client key.
+ *
+ * Rotation cannot restore ciphertext encrypted to a destroyed historical private key; it
+ * restores reliable encryption for all new messages and calls without giving the server a
+ * plaintext private key.
+ */
+suspend fun prepareIdentityAfterPasswordAuth(password:String):Boolean {
+    loadIdentityOrNull()?.let { local ->
+        api.putE2eeKey(b64(local.public.encoded),fingerprint(local.public.encoded))
+        uploadBackupWithRetry(local,password)
+        prefs.edit().putBoolean(recoveryBlockedPref(),false).apply()
+        return true
     }
+
+    val backup=remoteBackupOrNull()
+    if(backup!=null){
+        val restored=runCatching { restoreBackup(backup,password) }.getOrNull()
+        if(restored!=null){
+            persistIdentity(restored)
+            api.putE2eeKey(b64(restored.public.encoded),fingerprint(restored.public.encoded))
+            prefs.edit().putBoolean(recoveryBlockedPref(),false).apply()
+            return true
+        }
+    } else if(!serverIdentityExists()) {
+        val fresh=generateIdentity()
+        api.putE2eeKey(b64(fresh.public.encoded),fingerprint(fresh.public.encoded))
+        uploadBackupWithRetry(fresh,password)
+        return true
+    }
+
+    // Existing public key without a usable private key/backup: the old history cannot be
+    // recovered. Rotate only after successful password authentication so future traffic works.
+    prefs.edit().remove(pubKeyPref()).remove(privKeyPref()).putBoolean(recoveryBlockedPref(),false).apply()
+    runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(vaultAlias()) }
+    val fresh=generateIdentity()
+    api.putE2eeKey(b64(fresh.public.encoded),fingerprint(fresh.public.encoded))
+    uploadBackupWithRetry(fresh,password)
+    return true
+}
 
     private suspend fun peerKey(userId:String,force:Boolean=false):PeerKey=mutex.withLock {
         val scope=accountTag(); val key="peer_key_${scope}_$userId"; val fp="peer_fp_${scope}_$userId"

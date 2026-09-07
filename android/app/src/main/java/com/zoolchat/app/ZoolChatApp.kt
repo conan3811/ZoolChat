@@ -61,6 +61,26 @@ fun ZoolChatApp(
         val authScope = rememberCoroutineScope()
         var authenticated by remember { mutableStateOf(vm.isAuthenticated) }
         var profileSetupPending by remember { mutableStateOf(vm.session.initialProfileSetupPending) }
+        var sessionIdentityChecked by remember { mutableStateOf(!vm.isAuthenticated || vm.e2ee.hasLocalIdentity()) }
+
+        // Never enter Chats with a stale authenticated session whose local E2EE private
+        // identity is gone. Re-authentication provides the verified password required to
+        // restore the encrypted backup or safely rotate an unrecoverable legacy identity.
+        LaunchedEffect(Unit) {
+            if (vm.isAuthenticated && !vm.e2ee.hasLocalIdentity()) {
+                vm.auth.signOut()
+                authenticated = false
+                profileSetupPending = false
+            }
+            sessionIdentityChecked = true
+        }
+
+        if (!sessionIdentityChecked) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return@CompositionLocalProvider
+        }
 
         if (!authenticated) {
             PhoneAuthScreen(vm.auth,vm.session) {
@@ -70,9 +90,15 @@ fun ZoolChatApp(
                     profileSetupPending = vm.session.initialProfileSetupPending
                 } else {
                     authScope.launch {
-                        runCatching { vm.e2ee.prepareIdentityAfterPasswordAuth(password) }
-                        authenticated = vm.isAuthenticated
-                        profileSetupPending = vm.session.initialProfileSetupPending
+                        val identityReady = runCatching { vm.e2ee.prepareIdentityAfterPasswordAuth(password) }.getOrDefault(false)
+                        if (!identityReady) {
+                            vm.auth.signOut()
+                            authenticated = false
+                            profileSetupPending = false
+                        } else {
+                            authenticated = vm.isAuthenticated
+                            profileSetupPending = vm.session.initialProfileSetupPending
+                        }
                     }
                 }
             }
