@@ -72,7 +72,19 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
         }
         newRoom.prepareConnection(config.serverUrl, config.token)
         newRoom.connect(config.serverUrl, config.token)
-        check(newRoom.localParticipant.setMicrophoneEnabled(config.startMicrophone)) { "microphone_publish_failed" }
+
+        if (config.startMicrophone) {
+            var microphonePublished = newRoom.localParticipant.setMicrophoneEnabled(true)
+            // A small number of devices report a transient false immediately after Room.connect().
+            // Retry once instead of tearing down the accepted call on that first publication race.
+            if (!microphonePublished) {
+                delay(350)
+                microphonePublished = newRoom.localParticipant.setMicrophoneEnabled(true)
+            }
+            check(microphonePublished) { "microphone_publish_failed" }
+        } else {
+            runCatching { newRoom.localParticipant.setMicrophoneEnabled(false) }
+        }
         newRoom.localParticipant.setCameraEnabled(config.startCamera)
         refreshLocalCameraTrack()
         _connected.value = true
@@ -81,10 +93,12 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
 
     fun setSpeakerEnabled(enabled:Boolean) {
         val handler=audioHandler ?: return
-        val device=handler.availableAudioDevices.firstOrNull { it.javaClass.simpleName == if(enabled) "Speakerphone" else "Earpiece" }
-        handler.selectDevice(device)
+        runCatching {
+            val device=handler.availableAudioDevices.firstOrNull { it.javaClass.simpleName == if(enabled) "Speakerphone" else "Earpiece" }
+            handler.selectDevice(device)
+        }
     }
-    fun useAutomaticAudioRoute() { audioHandler?.selectDevice(null) }
+    fun useAutomaticAudioRoute() { runCatching { audioHandler?.selectDevice(null) } }
     override suspend fun setMicrophoneEnabled(enabled: Boolean) { check(room?.localParticipant?.setMicrophoneEnabled(enabled)==true) { "microphone_publish_failed" } }
     override suspend fun setCameraEnabled(enabled: Boolean) {
         room?.localParticipant?.setCameraEnabled(enabled)
@@ -112,7 +126,7 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
         room?.disconnect()
         room?.release()
         room = null
-        audioHandler?.stop(); audioHandler=null
+        runCatching { audioHandler?.stop() }; audioHandler=null
     }
 
     fun currentRoom(): Room? = room
