@@ -14,6 +14,19 @@ class DeviceContactsRepository(private val context: Context) {
 
     private fun sha256Hex(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
+    private fun normalizeToE164(raw: String, primaryRegion: String): String? {
+        val cleaned = raw.trim().replace(Regex("^00"), "+")
+        val regions = linkedSetOf(primaryRegion.ifBlank { "SA" }, "SA")
+        for (region in regions) {
+            val e164 = runCatching {
+                val parsed = phoneUtil.parse(cleaned, region)
+                if (!phoneUtil.isValidNumber(parsed)) null else phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
+            }.getOrNull()
+            if (!e164.isNullOrBlank()) return e164
+        }
+        return null
+    }
+
     fun readAll(): List<LocalPhoneContact> {
         val defaultRegion = Locale.getDefault().country.ifBlank { "SA" }
         val result = linkedMapOf<String, LocalPhoneContact>()
@@ -33,10 +46,7 @@ class DeviceContactsRepository(private val context: Context) {
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameIdx).orEmpty().trim()
                 val raw = cursor.getString(numberIdx).orEmpty()
-                val e164 = runCatching {
-                    val parsed = phoneUtil.parse(raw, defaultRegion)
-                    if (!phoneUtil.isValidNumber(parsed)) null else phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
-                }.getOrNull() ?: continue
+                val e164 = normalizeToE164(raw, defaultRegion) ?: continue
                 result.putIfAbsent(e164, LocalPhoneContact(name.ifBlank { e164 }, e164, sha256Hex(e164)))
             }
         }
