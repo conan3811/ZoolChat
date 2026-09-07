@@ -53,6 +53,21 @@ jobs:
       - name: Apply feedback patches
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/apply_v032_feedback_round2.py')
+          text=p.read_text(encoding='utf-8')
+          marker='\n# ---------------------------------------------------------------------------\n# Chat UI: WhatsApp-like long-press action sheet'
+          idx=text.find(marker)
+          if idx < 0:
+              raise SystemExit('chat UI section marker not found')
+          before=text[:idx].rstrip()
+          if before.endswith('""",'):
+              text=before+'\n)\n\n'+text[idx+1:]
+              p.write_text(text,encoding='utf-8')
+              print('Repaired missing replace_once closing parenthesis')
+          PY
+          python3 -m py_compile scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py
           python3 scripts/apply_v032_feedback_round2.py
           python3 scripts/fix_v032_feedback_round2_patch.py
           git diff --check
