@@ -23,7 +23,7 @@ jobs:
           cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" /tmp/apk-tools/
           cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/zipalign" /tmp/apk-tools/
           cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/lib/apksigner.jar" /tmp/apk-tools/lib/
-          libcxx="$(find "$ANDROID_SDK_ROOT" -type f -name 'libc++.so' | head -n 1)"
+          libcxx="$(find "$ANDROID_SDK_ROOT" -type f -name 'libc++.so' -print -quit)"
           test -n "$libcxx"
           cp "$libcxx" /tmp/apk-tools/lib64/libc++.so
       - uses: actions/upload-artifact@v4
