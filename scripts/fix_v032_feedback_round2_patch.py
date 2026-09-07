@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -9,6 +10,14 @@ def patch(rel: str, old: str, new: str, expected: int = 1):
     if count != expected:
         raise SystemExit(f'{rel}: expected {expected} occurrences, found {count}: {old[:120]!r}')
     p.write_text(text.replace(old, new), encoding='utf-8')
+
+def regex_patch(rel: str, pattern: str, replacement: str, expected: int = 1):
+    p = ROOT / rel
+    text = p.read_text(encoding='utf-8')
+    next_text, count = re.subn(pattern, replacement, text, count=expected, flags=re.S)
+    if count != expected:
+        raise SystemExit(f'{rel}: expected {expected} regex matches, found {count}: {pattern[:120]!r}')
+    p.write_text(next_text, encoding='utf-8')
 
 # Avoid ambiguity between message.type and chat.type in group-admin deletion authorization.
 patch(
@@ -22,12 +31,54 @@ patch(
     "const adminCanDelete=m.chat_type==='group'&&['owner','admin'].includes(String(m.role));",
 )
 
-# Self identity presence is recoverable from either the canonical public-key row or the encrypted
-# identity backup. This makes recovery robust if an older account has one side populated first.
+# emailRecovery.ts is installed before the legacy routes and is therefore the authoritative
+# account-security/E2EE backup surface. Keep the public key row and encrypted identity backup
+# transactionally coherent, and allow backup-only records created by an older v0.32 build to be
+# recognized during recovery.
 patch(
+    'server/src/emailRecovery.ts',
+    "    const r=await pool.query('SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1',[req.zoolUser!.id]);",
+    "    const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1 UNION ALL SELECT 'P256-ECDH'::text algorithm,public_key_b64,fingerprint_sha256,updated_at FROM e2ee_identity_backups WHERE user_id=$1 AND NOT EXISTS(SELECT 1 FROM user_crypto_keys WHERE user_id=$1) LIMIT 1`,[req.zoolUser!.id]);",
+)
+patch(
+    'server/src/emailRecovery.ts',
+    "    const current=await pool.query('SELECT public_key_b64,fingerprint_sha256 FROM user_crypto_keys WHERE user_id=$1',[uid]);",
+    "    const current=await pool.query(`SELECT public_key_b64,fingerprint_sha256 FROM user_crypto_keys WHERE user_id=$1 UNION ALL SELECT public_key_b64,fingerprint_sha256 FROM e2ee_identity_backups WHERE user_id=$1 AND NOT EXISTS(SELECT 1 FROM user_crypto_keys WHERE user_id=$1) LIMIT 1`,[uid]);",
+)
+patch(
+    'server/src/emailRecovery.ts',
+    """    await pool.query(`INSERT INTO e2ee_identity_backups(user_id,version,public_key_b64,fingerprint_sha256,salt_b64,iv_b64,ciphertext_b64)
+      VALUES($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT(user_id) DO UPDATE SET version=EXCLUDED.version,public_key_b64=EXCLUDED.public_key_b64,fingerprint_sha256=EXCLUDED.fingerprint_sha256,salt_b64=EXCLUDED.salt_b64,iv_b64=EXCLUDED.iv_b64,ciphertext_b64=EXCLUDED.ciphertext_b64,updated_at=now()`,[uid,b.data.version,b.data.publicKeyB64,b.data.fingerprintSha256,b.data.saltB64,b.data.ivB64,b.data.ciphertextB64]);
+""",
+    """    await tx(async c=>{
+      await c.query(`INSERT INTO user_crypto_keys(user_id,algorithm,public_key_b64,fingerprint_sha256)
+        VALUES($1,'P256-ECDH',$2,$3)
+        ON CONFLICT(user_id) DO UPDATE SET public_key_b64=EXCLUDED.public_key_b64,fingerprint_sha256=EXCLUDED.fingerprint_sha256,updated_at=now()`,[uid,b.data.publicKeyB64,b.data.fingerprintSha256]);
+      await c.query(`INSERT INTO e2ee_identity_backups(user_id,version,public_key_b64,fingerprint_sha256,salt_b64,iv_b64,ciphertext_b64)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(user_id) DO UPDATE SET version=EXCLUDED.version,public_key_b64=EXCLUDED.public_key_b64,fingerprint_sha256=EXCLUDED.fingerprint_sha256,salt_b64=EXCLUDED.salt_b64,iv_b64=EXCLUDED.iv_b64,ciphertext_b64=EXCLUDED.ciphertext_b64,updated_at=now()`,[uid,b.data.version,b.data.publicKeyB64,b.data.fingerprintSha256,b.data.saltB64,b.data.ivB64,b.data.ciphertextB64]);
+    });
+""",
+)
+
+# Backfill canonical public-key rows for accounts that already have an encrypted identity backup
+# created by an earlier build. This preserves peer-key lookup after an app reinstall without
+# exposing the private key to the server.
+migration = ROOT / 'server/migrations/017_v032_e2ee_key_backfill.sql'
+if not migration.exists():
+    migration.write_text("""INSERT INTO user_crypto_keys(user_id,algorithm,public_key_b64,fingerprint_sha256,created_at,updated_at)
+SELECT user_id,'P256-ECDH',public_key_b64,fingerprint_sha256,created_at,updated_at
+FROM e2ee_identity_backups
+ON CONFLICT(user_id) DO NOTHING;
+""", encoding='utf-8')
+
+# The round-2 generator originally added a second copy of the same E2EE/password handlers to
+# index.ts. Remove that duplicate surface so Express has one authoritative implementation.
+regex_patch(
     'server/src/index.ts',
-    "  const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1`,[req.zoolUser!.id]);\n  if(!r.rowCount)return res.status(404).json({error:'e2ee_key_not_found'});",
-    "  const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1 UNION ALL SELECT 'P256-ECDH'::text algorithm,public_key_b64,fingerprint_sha256,updated_at FROM e2ee_identity_backups WHERE user_id=$1 LIMIT 1`,[req.zoolUser!.id]);\n  if(!r.rowCount)return res.status(404).json({error:'e2ee_key_not_found'});",
+    r"\napp\.get\('/api/e2ee/self-key', requireAuth, async \(req,res\)=>\{.*?\napp\.post\('/api/me/password/verify', requireAuth, async \(req,res\)=>\{.*?\n\}\);\n",
+    "\n",
 )
 
 # An edit response/event must not carry viewer-specific reactedByMe flags to other users.
@@ -61,12 +112,12 @@ patch(
     expected=2,
 )
 
-# Temporary integration diagnostics: prove whether the backup rows exist when the self-key route
-# returns 404. The generated test is dedented by eight spaces, leaving two spaces inside try{}.
+# The integration test also verifies that uploading an encrypted identity backup immediately makes
+# the corresponding public key available to another participant.
 patch(
     'server/tests/message-interactions.mjs',
-    "  assert.equal((await put('/api/e2ee/backup',backup,a.token)).status,200,'encrypted identity backup must upload');\n  assert.equal((await get('/api/e2ee/self-key',a.token)).status,200,'self identity metadata must exist after backup upload');\n  const restored=await get('/api/e2ee/backup',a.token);assert.equal(restored.status,200);const rb=(await restored.json()).backup;assert.equal(rb.publicKeyB64,backup.publicKeyB64);assert.equal(rb.ciphertextB64,backup.ciphertextB64);",
-    "  const backupPut=await put('/api/e2ee/backup',backup,a.token);assert.equal(backupPut.status,200,'encrypted identity backup must upload');\n  const dbState=await pool.query(`SELECT (SELECT count(*)::int FROM user_crypto_keys WHERE user_id=$1) key_count,(SELECT count(*)::int FROM e2ee_identity_backups WHERE user_id=$1) backup_count`,[a.id]);console.log('E2EE_DB_STATE',dbState.rows[0]);\n  const selfKey=await get('/api/e2ee/self-key',a.token);console.log('E2EE_SELF_KEY_STATUS',selfKey.status,await selfKey.clone().text());assert.equal(selfKey.status,200,'self identity metadata must exist after backup upload');\n  const restored=await get('/api/e2ee/backup',a.token);console.log('E2EE_BACKUP_STATUS',restored.status,await restored.clone().text());assert.equal(restored.status,200);const rb=(await restored.json()).backup;assert.equal(rb.publicKeyB64,backup.publicKeyB64);assert.equal(rb.ciphertextB64,backup.ciphertextB64);",
+    "  assert.equal((await get('/api/e2ee/self-key',a.token)).status,200,'self identity metadata must exist after backup upload');\n  const restored=await get('/api/e2ee/backup',a.token);",
+    "  assert.equal((await get('/api/e2ee/self-key',a.token)).status,200,'self identity metadata must exist after backup upload');\n  assert.equal((await get(`/api/users/${a.id}/e2ee-key`,b.token)).status,200,'peer key lookup must work after backup upload');\n  const restored=await get('/api/e2ee/backup',a.token);",
 )
 
 print('PASS: hardened feedback round 2 patch')
