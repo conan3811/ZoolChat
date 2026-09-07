@@ -73,12 +73,19 @@ jobs:
           python3 scripts/fix_v032_feedback_round2_patch.py
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('server/src/index.ts')
+          p=Path('server/tests/message-interactions.mjs')
           text=p.read_text(encoding='utf-8')
-          old="const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1`,[req.zoolUser!.id]);"
-          new="const r=await pool.query(`SELECT 'P256-ECDH'::text algorithm,public_key_b64,fingerprint_sha256,updated_at FROM e2ee_identity_backups WHERE user_id=$1 UNION ALL SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1 AND NOT EXISTS(SELECT 1 FROM e2ee_identity_backups WHERE user_id=$1) LIMIT 1`,[req.zoolUser!.id]);"
-          if text.count(old) != 1:
-              raise SystemExit(f'self-key query anchor count={text.count(old)}')
+          old="""          assert.equal((await put('/api/e2ee/backup',backup,a.token)).status,200,'encrypted identity backup must upload');
+          assert.equal((await get('/api/e2ee/self-key',a.token)).status,200,'self identity metadata must exist after backup upload');
+          const restored=await get('/api/e2ee/backup',a.token);assert.equal(restored.status,200);const rb=(await restored.json()).backup;assert.equal(rb.publicKeyB64,backup.publicKeyB64);assert.equal(rb.ciphertextB64,backup.ciphertextB64);
+"""
+          new="""          const backupPut=await put('/api/e2ee/backup',backup,a.token);assert.equal(backupPut.status,200,'encrypted identity backup must upload');
+          const dbState=await pool.query(`SELECT (SELECT count(*)::int FROM user_crypto_keys WHERE user_id=$1) key_count,(SELECT count(*)::int FROM e2ee_identity_backups WHERE user_id=$1) backup_count`,[a.id]);console.log('E2EE_DB_STATE',dbState.rows[0]);
+          const selfKey=await get('/api/e2ee/self-key',a.token);console.log('E2EE_SELF_KEY_STATUS',selfKey.status,await selfKey.clone().text());assert.equal(selfKey.status,200,'self identity metadata must exist after backup upload');
+          const restored=await get('/api/e2ee/backup',a.token);console.log('E2EE_BACKUP_STATUS',restored.status,await restored.clone().text());assert.equal(restored.status,200);const rb=(await restored.json()).backup;assert.equal(rb.publicKeyB64,backup.publicKeyB64);assert.equal(rb.ciphertextB64,backup.ciphertextB64);
+"""
+          if text.count(old)!=1:
+              raise SystemExit(f'diagnostic test anchor count={text.count(old)}')
           p.write_text(text.replace(old,new,1),encoding='utf-8')
           PY
           git diff --check
