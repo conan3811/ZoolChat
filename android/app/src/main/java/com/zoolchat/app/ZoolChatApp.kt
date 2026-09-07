@@ -1,10 +1,7 @@
 package com.zoolchat.app
 
 import android.content.Context
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -12,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -22,12 +20,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.zoolchat.app.auth.RecentAuthSecret
 import com.zoolchat.app.state.ZoolAppViewModel
 import com.zoolchat.app.ui.i18n.AppLanguage
 import com.zoolchat.app.ui.i18n.I18n
 import com.zoolchat.app.ui.i18n.t
 import com.zoolchat.app.ui.screens.*
 import com.zoolchat.app.ui.theme.ThemeMode
+import kotlinx.coroutines.launch
 
 private data class BottomItem(val route:String,val label:String,val icon:androidx.compose.ui.graphics.vector.ImageVector)
 
@@ -59,13 +59,25 @@ fun ZoolChatApp(
         }
 
         val vm: ZoolAppViewModel = viewModel()
+        val authScope = rememberCoroutineScope()
         var authenticated by remember { mutableStateOf(vm.isAuthenticated) }
         var profileSetupPending by remember { mutableStateOf(vm.session.initialProfileSetupPending) }
+        var cryptoRecoveryWarning by remember { mutableStateOf(false) }
 
         if (!authenticated) {
             PhoneAuthScreen(vm.auth,vm.session) {
-                authenticated = vm.isAuthenticated
-                profileSetupPending = vm.session.initialProfileSetupPending
+                val password=RecentAuthSecret.consume()
+                if(password==null){
+                    authenticated = vm.isAuthenticated
+                    profileSetupPending = vm.session.initialProfileSetupPending
+                } else {
+                    authScope.launch {
+                        val recovered=runCatching { vm.e2ee.prepareIdentityAfterPasswordAuth(password) }.getOrDefault(false)
+                        cryptoRecoveryWarning=!recovered
+                        authenticated = vm.isAuthenticated
+                        profileSetupPending = vm.session.initialProfileSetupPending
+                    }
+                }
             }
             return@CompositionLocalProvider
         }
@@ -102,6 +114,15 @@ fun ZoolChatApp(
                 profileSetupPending = vm.session.initialProfileSetupPending
             },
         )
+
+        if(cryptoRecoveryWarning){
+            AlertDialog(
+                onDismissRequest={cryptoRecoveryWarning=false},
+                title={Text(t("حماية الرسائل المشفرة"))},
+                text={Text(t("تم تسجيل الدخول، لكن لم يمكن استعادة مفتاح تشفير قديم تلقائياً. لن يستبدل ZoolChat المفتاح السابق بصمت. الرسائل التي فُقد مفتاحها قبل تفعيل النسخة المشفرة لا يمكن استعادتها، بينما ستُحمى عمليات إعادة التثبيت القادمة بعد إنشاء النسخة الآمنة."))},
+                confirmButton={TextButton(onClick={cryptoRecoveryWarning=false}){Text(t("حسناً"))}},
+            )
+        }
     }
 }
 
@@ -121,8 +142,14 @@ private fun ProductionNav(
     val permissionLauncher=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { vm.session.notificationsExplained=true }
     LaunchedEffect(Unit) { if(android.os.Build.VERSION.SDK_INT>=33&&!vm.session.notificationsExplained)permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
     val nav=rememberNavController()
+    val scope=rememberCoroutineScope()
     var memberId by remember { mutableStateOf<String?>(null) }
     var memberChatId by remember { mutableStateOf("") }
+    var showBackupPrompt by remember { mutableStateOf(false) }
+    var backupPromptChecked by remember { mutableStateOf(false) }
+    var backupPassword by remember { mutableStateOf("") }
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupError by remember { mutableStateOf<String?>(null) }
     val chats by vm.chats.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val searchResults by vm.directorySearch.collectAsState()
@@ -134,9 +161,39 @@ private fun ProductionNav(
     val typing by vm.typing.collectAsState()
     val me by vm.currentUser.collectAsState()
     val current by nav.currentBackStackEntryAsState();val route=current?.destination?.route.orEmpty();val showBottom=route in setOf("chats","stories","communities","calls","meet")
+
+    LaunchedEffect(me?.id){
+        if(me!=null&&!backupPromptChecked){
+            backupPromptChecked=true
+            showBackupPrompt=runCatching{vm.e2ee.backupRequired()}.getOrDefault(false)
+        }
+    }
     LaunchedEffect(incomingCall){if(incomingCall!=null){nav.navigate("livecall/incoming/${incomingCall.callId}/${incomingCall.video}/${incomingCall.autoAccept}");onIncomingCallConsumed()}}
     LaunchedEffect(realtimeIncoming){if(realtimeIncoming!=null){nav.navigate("livecall/incoming/${realtimeIncoming!!.first}/${realtimeIncoming!!.second}/false");vm.consumeIncomingRealtimeCall()}}
     LaunchedEffect(openChatId){if(!openChatId.isNullOrBlank()){nav.navigate(if(openChatId=="__meet__") "meet" else "prodchat/$openChatId");onOpenChatConsumed()}}
+
+    if(showBackupPrompt){
+        AlertDialog(
+            onDismissRequest={if(!backupBusy)showBackupPrompt=false},
+            title={Text(t("حماية سجل الرسائل المشفرة"))},
+            text={Column{
+                Text(t("لحماية الرسائل القديمة عند حذف التطبيق أو تبديل الهاتف، أدخل كلمة مرور حسابك مرة واحدة. سيتم رفع نسخة مشفرة من مفتاح الرسائل، وليس كلمة المرور أو المفتاح بصورته المقروءة."))
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(backupPassword,{backupPassword=it},label={Text(t("كلمة المرور"))},visualTransformation=PasswordVisualTransformation(),singleLine=true,enabled=!backupBusy)
+                backupError?.let{Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=6.dp))}
+            }},
+            confirmButton={Button(enabled=!backupBusy&&backupPassword.length>=8,onClick={
+                backupBusy=true;backupError=null
+                scope.launch{
+                    runCatching{vm.e2ee.backupCurrentIdentityWithVerifiedPassword(backupPassword)}
+                        .onSuccess{backupBusy=false;backupPassword="";showBackupPrompt=false}
+                        .onFailure{backupBusy=false;backupError=t("تعذر إنشاء النسخة المشفرة. تحقق من كلمة المرور وحاول مرة أخرى.")}
+                }
+            }){Text(t("حماية الرسائل"))}},
+            dismissButton={TextButton(enabled=!backupBusy,onClick={showBackupPrompt=false}){Text(t("لاحقاً"))}},
+        )
+    }
+
     memberId?.let { id ->
         GroupMemberSheet(
             api=vm.api,
@@ -273,8 +330,10 @@ private fun ProductionNav(
             composable("account"){
                 AccountScreen(
                     api=vm.api,
+                    e2ee=vm.e2ee,
                     username=me?.username.orEmpty(),
                     onBack={nav.popBackStack()},
+                    onEditIdentity={nav.navigate("edit-profile")},
                     onLogout={vm.logout(onSignedOut)},
                     onDeleteAccount={vm.deleteAccount(onSignedOut)},
                 )
