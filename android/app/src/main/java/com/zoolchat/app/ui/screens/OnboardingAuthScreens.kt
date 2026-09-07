@@ -176,9 +176,7 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
     var error by remember { mutableStateOf<String?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     val countries = rememberCountryDialOptions()
-    var region by remember {
-        mutableStateOf(Locale.getDefault().country.takeIf { r -> countries.any { it.region == r } } ?: "SA")
-    }
+    var region by remember { mutableStateOf("SA") }
     val country = countries.firstOrNull { it.region == region } ?: countries.first()
     var picker by remember { mutableStateOf(false) }
 
@@ -231,10 +229,10 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
                 OutlinedButton(
                     onClick = { picker = true },
                     enabled = !loading,
-                    modifier = Modifier.width(116.dp).height(56.dp),
+                    modifier = Modifier.width(132.dp).height(56.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp),
                 ) {
-                    Text("+${country.callingCode}", maxLines = 1)
+                    Text(if (country.region == "SA") "🇸🇦 +966" else "+${country.callingCode}", maxLines = 1)
                     Spacer(Modifier.width(2.dp))
                     Icon(Icons.Rounded.ArrowDropDown, contentDescription = authLabel("اختيار الدولة", "Choose country"))
                 }
