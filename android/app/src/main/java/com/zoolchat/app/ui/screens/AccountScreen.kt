@@ -75,7 +75,7 @@ fun AccountScreen(
                     infoDialog="multi"
                 }
                 AccountSection(t("تسجيل الدخول والأمان"))
-                AccountRow(Icons.Rounded.Passkey,t("مفاتيح المرور"),t("تسجيل دخول بدون كلمة مرور عند توفر الدعم")){infoDialog="passkey"}
+                AccountRow(Icons.Rounded.Key,t("مفاتيح المرور"),t("تسجيل دخول بدون كلمة مرور عند توفر الدعم")){infoDialog="passkey"}
                 AccountRow(Icons.Rounded.Password,t("كلمة المرور"),t("تغيير كلمة مرور الحساب")){showPassword=true}
                 AccountRow(Icons.Rounded.Email,t("البريد الإلكتروني"),if(email.isBlank())t("إضافة بريد إلكتروني") else if(emailVerified)t("موثّق") else t("غير موثّق"),onClick=onEditIdentity)
                 AccountRow(Icons.Rounded.EnhancedEncryption,t("التحقق بخطوتين"),t("طبقة أمان إضافية للحساب")){infoDialog="2fa"}
