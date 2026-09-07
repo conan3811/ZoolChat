@@ -71,6 +71,16 @@ jobs:
           python3 -m py_compile scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py
           python3 scripts/apply_v032_feedback_round2.py
           python3 scripts/fix_v032_feedback_round2_patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('server/src/index.ts')
+          text=p.read_text(encoding='utf-8')
+          old="const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1`,[req.zoolUser!.id]);"
+          new="const r=await pool.query(`SELECT 'P256-ECDH'::text algorithm,public_key_b64,fingerprint_sha256,updated_at FROM e2ee_identity_backups WHERE user_id=$1 UNION ALL SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1 AND NOT EXISTS(SELECT 1 FROM e2ee_identity_backups WHERE user_id=$1) LIMIT 1`,[req.zoolUser!.id]);"
+          if text.count(old) != 1:
+              raise SystemExit(f'self-key query anchor count={text.count(old)}')
+          p.write_text(text.replace(old,new,1),encoding='utf-8')
+          PY
           git diff --check
           git status --short
 
@@ -132,6 +142,7 @@ jobs:
       - name: Commit validated fixes
         run: |
           set -euo pipefail
+          rm -rf scripts/__pycache__
           rm -f scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py .github/workflows/apply-v032-feedback-round2.yml
           git add -A
           git diff --cached --check
