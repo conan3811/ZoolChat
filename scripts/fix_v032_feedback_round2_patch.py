@@ -22,6 +22,14 @@ patch(
     "const adminCanDelete=m.chat_type==='group'&&['owner','admin'].includes(String(m.role));",
 )
 
+# Self identity presence is recoverable from either the canonical public-key row or the encrypted
+# identity backup. This makes recovery robust if an older account has one side populated first.
+patch(
+    'server/src/index.ts',
+    "  const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1`,[req.zoolUser!.id]);\n  if(!r.rowCount)return res.status(404).json({error:'e2ee_key_not_found'});",
+    "  const r=await pool.query(`SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1 UNION ALL SELECT 'P256-ECDH'::text algorithm,public_key_b64,fingerprint_sha256,updated_at FROM e2ee_identity_backups WHERE user_id=$1 LIMIT 1`,[req.zoolUser!.id]);\n  if(!r.rowCount)return res.status(404).json({error:'e2ee_key_not_found'});",
+)
+
 # An edit response/event must not carry viewer-specific reactedByMe flags to other users.
 patch(
     'server/src/index.ts',
