@@ -1,0 +1,38 @@
+name: Verify live ZoolChat v0.32
+
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - '.github/workflows/verify-live-v032.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Northflank deployment and verify health
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://p01--zoolchat--8q4zpgbqbm94.code.run/health'
+          for i in $(seq 1 30); do
+            echo "Attempt $i"
+            body="$(curl -fsS --max-time 15 "$url" || true)"
+            if [ -n "$body" ]; then
+              echo "$body"
+              version="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("version", ""))' <<<"$body" 2>/dev/null || true)"
+              ok="$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("ok", False)).lower())' <<<"$body" 2>/dev/null || true)"
+              db="$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("db", False)).lower())' <<<"$body" 2>/dev/null || true)"
+              if [[ "$version" == 0.32* && "$ok" == "true" && "$db" == "true" ]]; then
+                echo "LIVE_V032_OK version=$version"
+                exit 0
+              fi
+            fi
+            sleep 20
+          done
+          echo 'Live backend did not report healthy v0.32 within the verification window.' >&2
+          exit 1
