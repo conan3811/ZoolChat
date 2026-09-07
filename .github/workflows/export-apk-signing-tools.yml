@@ -28,3 +28,4 @@ jobs:
           name: android-apk-signing-tools
           path: /tmp/apk-tools
           if-no-files-found: error
+# refreshed for local v0.32 Firebase packaging verification
