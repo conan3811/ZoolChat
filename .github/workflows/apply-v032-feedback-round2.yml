@@ -57,15 +57,14 @@ jobs:
           from pathlib import Path
           p=Path('scripts/apply_v032_feedback_round2.py')
           text=p.read_text(encoding='utf-8')
-          marker='\n# ---------------------------------------------------------------------------\n# Chat UI: WhatsApp-like long-press action sheet'
-          idx=text.find(marker)
-          if idx < 0:
-              raise SystemExit('chat UI section marker not found')
-          before=text[:idx].rstrip()
-          if before.endswith('""",'):
-              text=before+'\n)\n\n'+text[idx+1:]
-              p.write_text(text,encoding='utf-8')
-              print('Repaired missing replace_once closing parenthesis')
+          # Repair the accidental unterminated triple-quoted empty replacement in the manifest patch.
+          lines=text.splitlines()
+          for i,line in enumerate(lines[:-1]):
+              if 'FOREGROUND_SERVICE_SPECIAL_USE' in line and lines[i+1].strip() == '""",':
+                  lines[i+1]='    "",'
+                  break
+          text='\n'.join(lines)+'\n'
+          p.write_text(text,encoding='utf-8')
           PY
           python3 -m py_compile scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py
           python3 scripts/apply_v032_feedback_round2.py
