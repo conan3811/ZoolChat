@@ -13,6 +13,7 @@ if (file("google-services.json").exists()) {
 android {
     namespace = "com.zoolchat.app"
     compileSdk = 37
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "com.zoolchat.app"
