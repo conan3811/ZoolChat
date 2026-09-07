@@ -36,6 +36,8 @@ import java.io.File
 import kotlin.math.ln
 import kotlin.math.pow
 
+private val SettingsItemIconSize = 24.dp
+
 @Composable
 fun SettingsHubV032(
     themeMode: ThemeMode,
@@ -66,19 +68,13 @@ fun SettingsHubV032(
     var showLogoutConfirm by remember { mutableStateOf(false) }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .navigationBarsPadding()
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState()).navigationBarsPadding()
     ) {
         SettingsTopBar(t("الإعدادات"), onBack)
 
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ZoolDimens.ScreenPadding, vertical = 6.dp)
-                .clickable(onClick = onEditProfile),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = ZoolDimens.ScreenPadding, vertical = 6.dp).clickable(onClick = onEditProfile),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = RoundedCornerShape(18.dp),
         ) {
@@ -93,12 +89,12 @@ fun SettingsHubV032(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Icon(Icons.Rounded.QrCode2, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Rounded.QrCode2, contentDescription = null, modifier = Modifier.size(SettingsItemIconSize), tint = MaterialTheme.colorScheme.primary)
             }
         }
 
         SettingsSection(t("الحساب"))
-        SettingsRow(Icons.Rounded.Key, t("الحساب"), t("الأجهزة، تصدير البيانات، حذف الحساب"), onAccount)
+        SettingsRow(Icons.Rounded.Key, t("الحساب"), t("الأمان، البريد، رقم الهاتف، الأجهزة وبيانات الحساب"), onAccount)
         SettingsRow(Icons.Rounded.Security, t("الخصوصية"), t("آخر ظهور، متصل الآن، مؤشرات القراءة"), onPrivacy)
         SettingsRow(Icons.Rounded.Chat, t("الدردشات"), t("حجم الخط، زر الإدخال، ظهور الوسائط والأرشفة"), onChats)
         SettingsRow(Icons.Rounded.Notifications, t("الإشعارات"), t("الرسائل والمجموعات والمكالمات"), onNotifications)
@@ -137,13 +133,11 @@ fun SettingsHubV032(
         AlertDialog(
             onDismissRequest = { showThemeDialog = false },
             title = { Text(t("المظهر")) },
-            text = {
-                Column {
-                    ChoiceRow(t("فاتح"), themeMode == ThemeMode.LIGHT) { onThemeModeChange(ThemeMode.LIGHT); showThemeDialog = false }
-                    ChoiceRow(t("داكن"), themeMode == ThemeMode.DARK) { onThemeModeChange(ThemeMode.DARK); showThemeDialog = false }
-                    ChoiceRow(t("حسب الجهاز"), themeMode == ThemeMode.SYSTEM) { onThemeModeChange(ThemeMode.SYSTEM); showThemeDialog = false }
-                }
-            },
+            text = { Column {
+                ChoiceRow(t("فاتح"), themeMode == ThemeMode.LIGHT) { onThemeModeChange(ThemeMode.LIGHT); showThemeDialog = false }
+                ChoiceRow(t("داكن"), themeMode == ThemeMode.DARK) { onThemeModeChange(ThemeMode.DARK); showThemeDialog = false }
+                ChoiceRow(t("حسب الجهاز"), themeMode == ThemeMode.SYSTEM) { onThemeModeChange(ThemeMode.SYSTEM); showThemeDialog = false }
+            } },
             confirmButton = { TextButton(onClick = { showThemeDialog = false }) { Text(t("إغلاق")) } },
         )
     }
@@ -152,12 +146,10 @@ fun SettingsHubV032(
         AlertDialog(
             onDismissRequest = { showLanguageDialog = false },
             title = { Text(t("لغة التطبيق")) },
-            text = {
-                Column {
-                    ChoiceRow("العربية", appLanguage == AppLanguage.AR) { onLanguageChange(AppLanguage.AR); showLanguageDialog = false }
-                    ChoiceRow("English", appLanguage == AppLanguage.EN) { onLanguageChange(AppLanguage.EN); showLanguageDialog = false }
-                }
-            },
+            text = { Column {
+                ChoiceRow("العربية", appLanguage == AppLanguage.AR) { onLanguageChange(AppLanguage.AR); showLanguageDialog = false }
+                ChoiceRow("English", appLanguage == AppLanguage.EN) { onLanguageChange(AppLanguage.EN); showLanguageDialog = false }
+            } },
             confirmButton = { TextButton(onClick = { showLanguageDialog = false }) { Text(t("إغلاق")) } },
         )
     }
@@ -167,12 +159,7 @@ fun SettingsHubV032(
             onDismissRequest = { showLogoutConfirm = false },
             title = { Text(t("تسجيل الخروج؟")) },
             text = { Text(t("سيتم تسجيل خروجك من ZoolChat على هذا الجهاز، ويمكنك تسجيل الدخول مرة أخرى لاحقاً.")) },
-            confirmButton = {
-                TextButton(
-                    onClick = { showLogoutConfirm = false; onLogout() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) { Text(t("تسجيل الخروج")) }
-            },
+            confirmButton = { TextButton(onClick = { showLogoutConfirm = false; onLogout() }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(t("تسجيل الخروج")) } },
             dismissButton = { TextButton(onClick = { showLogoutConfirm = false }) { Text(t("إلغاء")) } },
         )
     }
@@ -197,14 +184,12 @@ fun ChatSettingsScreen(onBack: () -> Unit) {
         SettingsToggle(Icons.Rounded.Photo, t("ظهور الوسائط"), t("إظهار الوسائط التي يتم تنزيلها حديثاً في معرض الهاتف"), mediaVisibility) {
             mediaVisibility = it; prefs.edit().putBoolean("chat_media_visibility", it).apply()
         }
-
         SettingsSection(t("الدردشات المؤرشفة"))
         SettingsToggle(Icons.Rounded.Archive, t("إبقاء الدردشات في الأرشيف"), t("تظل الدردشات المؤرشفة مؤرشفة عند وصول رسائل جديدة"), keepArchived) {
             keepArchived = it; prefs.edit().putBoolean("chat_keep_archived", it).apply()
         }
-
         SettingsSection(t("النسخ الاحتياطي والسجل"))
-        SettingsInfoRow(Icons.Rounded.Cloud, t("النسخ الاحتياطي للدردشات"), t("سيتم ربط النسخ الاحتياطي السحابي عندما تتوفر خدمة تخزين مخصصة لـ ZoolChat"))
+        SettingsInfoRow(Icons.Rounded.Cloud, t("النسخ الاحتياطي للدردشات"), t("مفتاح الرسائل المشفرة له نسخة حماية منفصلة داخل إعدادات الحساب"))
         SettingsInfoRow(Icons.Rounded.History, t("سجل الدردشة"), t("إدارة التصدير والمسح من داخل المحادثة أو إعدادات الحساب"))
     }
 
@@ -212,17 +197,11 @@ fun ChatSettingsScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showFontDialog = false },
             title = { Text(t("حجم الخط")) },
-            text = {
-                Column {
-                    listOf("small" to t("صغير"), "medium" to t("متوسط"), "large" to t("كبير")).forEach { (value, label) ->
-                        ChoiceRow(label, fontSize == value) {
-                            fontSize = value
-                            prefs.edit().putString("chat_font_size", value).apply()
-                            showFontDialog = false
-                        }
-                    }
+            text = { Column {
+                listOf("small" to t("صغير"), "medium" to t("متوسط"), "large" to t("كبير")).forEach { (value, label) ->
+                    ChoiceRow(label, fontSize == value) { fontSize = value; prefs.edit().putString("chat_font_size", value).apply(); showFontDialog = false }
                 }
-            },
+            } },
             confirmButton = { TextButton(onClick = { showFontDialog = false }) { Text(t("إغلاق")) } },
         )
     }
@@ -240,37 +219,18 @@ fun NotificationSettingsScreen(onBack: () -> Unit) {
     var highPriority by remember { mutableStateOf(prefs.getBoolean("notif_high_priority", true)) }
 
     SettingsPage(t("الإشعارات"), onBack) {
-        SettingsToggle(Icons.Rounded.VolumeUp, t("نغمات المحادثات"), t("تشغيل أصوات الرسائل الواردة والصادرة"), tones) {
-            tones = it; prefs.edit().putBoolean("notif_conversation_tones", it).apply()
-        }
+        SettingsToggle(Icons.Rounded.VolumeUp, t("نغمات المحادثات"), t("تشغيل أصوات الرسائل الواردة والصادرة"), tones) { tones = it; prefs.edit().putBoolean("notif_conversation_tones", it).apply() }
         SettingsSection(t("الرسائل"))
-        SettingsToggle(Icons.Rounded.Message, t("إشعارات الرسائل"), t("السماح بإشعارات الرسائل الفردية"), messages) {
-            messages = it; prefs.edit().putBoolean("notif_messages_enabled", it).apply()
-        }
-        SettingsToggle(Icons.Rounded.Groups, t("إشعارات المجموعات"), t("السماح بإشعارات رسائل المجموعات"), groups) {
-            groups = it; prefs.edit().putBoolean("notif_groups_enabled", it).apply()
-        }
-        SettingsToggle(Icons.Rounded.Favorite, t("إشعارات التفاعلات"), t("تنبيهك عند التفاعل مع رسائلك أو حالتك"), reactions) {
-            reactions = it; prefs.edit().putBoolean("notif_reactions_enabled", it).apply()
-        }
-        SettingsToggle(Icons.Rounded.PriorityHigh, t("إشعارات ذات أولوية عالية"), t("عرض معاينات الرسائل بشكل بارز عندما يسمح Android"), highPriority) {
-            highPriority = it; prefs.edit().putBoolean("notif_high_priority", it).apply()
-        }
+        SettingsToggle(Icons.Rounded.Message, t("إشعارات الرسائل"), t("السماح بإشعارات الرسائل الفردية"), messages) { messages = it; prefs.edit().putBoolean("notif_messages_enabled", it).apply() }
+        SettingsToggle(Icons.Rounded.Groups, t("إشعارات المجموعات"), t("السماح بإشعارات رسائل المجموعات"), groups) { groups = it; prefs.edit().putBoolean("notif_groups_enabled", it).apply() }
+        SettingsToggle(Icons.Rounded.Favorite, t("إشعارات التفاعلات"), t("تنبيهك عند التفاعل مع رسائلك أو حالتك"), reactions) { reactions = it; prefs.edit().putBoolean("notif_reactions_enabled", it).apply() }
+        SettingsToggle(Icons.Rounded.PriorityHigh, t("إشعارات ذات أولوية عالية"), t("عرض معاينات الرسائل بشكل بارز عندما يسمح Android"), highPriority) { highPriority = it; prefs.edit().putBoolean("notif_high_priority", it).apply() }
         SettingsSection(t("المكالمات"))
-        SettingsToggle(Icons.Rounded.PhoneInTalk, t("إشعارات المكالمات"), t("الرنين والاهتزاز للمكالمات الواردة"), calls) {
-            calls = it; prefs.edit().putBoolean("notif_calls_enabled", it).apply()
-        }
+        SettingsToggle(Icons.Rounded.PhoneInTalk, t("إشعارات المكالمات"), t("الرنين والاهتزاز للمكالمات الواردة"), calls) { calls = it; prefs.edit().putBoolean("notif_calls_enabled", it).apply() }
         SettingsRow(Icons.Rounded.Settings, t("إعدادات إشعارات Android"), t("النغمة، الاهتزاز، شاشة القفل والقنوات")) {
-            runCatching {
-                context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-            }
+            runCatching { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) }
         }
-        Text(
-            t("ملاحظة: إعدادات إشعارات Android يمكنها تجاوز إعدادات التطبيق."),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(16.dp),
-        )
+        Text(t("ملاحظة: إعدادات إشعارات Android يمكنها تجاوز إعدادات التطبيق."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
     }
 }
 
@@ -285,48 +245,30 @@ fun StorageDataSettingsScreen(onBack: () -> Unit) {
     var uploadQuality by remember { mutableStateOf(prefs.getString("media_upload_quality", "standard") ?: "standard") }
     var showQuality by remember { mutableStateOf(false) }
     var cacheBytes by remember { mutableLongStateOf(0L) }
-
     fun refreshCache() { cacheBytes = directoryBytes(context.cacheDir) }
     LaunchedEffect(Unit) { refreshCache() }
 
     SettingsPage(t("التخزين والبيانات"), onBack) {
         SettingsSection(t("إدارة التخزين"))
-        SettingsRow(Icons.Rounded.Storage, t("مساحة التخزين المؤقت"), humanBytes(cacheBytes)) {
-            runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }
-        }
-        SettingsRow(Icons.Rounded.DeleteSweep, t("مسح الملفات المؤقتة"), t("لا يحذف الرسائل أو الحساب")) {
-            runCatching { context.cacheDir.listFiles()?.forEach { it.deleteRecursively() } }
-            refreshCache()
-        }
-
+        SettingsRow(Icons.Rounded.Storage, t("مساحة التخزين المؤقت"), humanBytes(cacheBytes)) { runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) } }
+        SettingsRow(Icons.Rounded.DeleteSweep, t("مسح الملفات المؤقتة"), t("لا يحذف الرسائل أو الحساب")) { runCatching { context.cacheDir.listFiles()?.forEach { it.deleteRecursively() } }; refreshCache() }
         SettingsSection(t("التنزيل التلقائي للوسائط"))
-        SettingsToggle(Icons.Rounded.SignalCellularAlt, t("عند استخدام بيانات الهاتف"), t("تنزيل الوسائط تلقائياً عبر بيانات الجوال"), mobile) {
-            mobile = it; prefs.edit().putBoolean("media_auto_mobile", it).apply()
-        }
-        SettingsToggle(Icons.Rounded.Wifi, t("عند الاتصال بشبكة Wi‑Fi"), t("تنزيل الوسائط تلقائياً عبر Wi‑Fi"), wifi) {
-            wifi = it; prefs.edit().putBoolean("media_auto_wifi", it).apply()
-        }
-        SettingsToggle(Icons.Rounded.Public, t("أثناء التجوال"), t("قد يؤدي ذلك إلى رسوم بيانات إضافية"), roaming) {
-            roaming = it; prefs.edit().putBoolean("media_auto_roaming", it).apply()
-        }
-
+        SettingsToggle(Icons.Rounded.SignalCellularAlt, t("عند استخدام بيانات الهاتف"), t("تنزيل الوسائط تلقائياً عبر بيانات الجوال"), mobile) { mobile = it; prefs.edit().putBoolean("media_auto_mobile", it).apply() }
+        SettingsToggle(Icons.Rounded.Wifi, t("عند الاتصال بشبكة Wi‑Fi"), t("تنزيل الوسائط تلقائياً عبر Wi‑Fi"), wifi) { wifi = it; prefs.edit().putBoolean("media_auto_wifi", it).apply() }
+        SettingsToggle(Icons.Rounded.Public, t("أثناء التجوال"), t("قد يؤدي ذلك إلى رسوم بيانات إضافية"), roaming) { roaming = it; prefs.edit().putBoolean("media_auto_roaming", it).apply() }
         SettingsSection(t("جودة الوسائط والمكالمات"))
         SettingsRow(Icons.Rounded.HighQuality, t("جودة تحميل الوسائط"), if (uploadQuality == "hd") t("جودة HD") else t("جودة قياسية")) { showQuality = true }
-        SettingsToggle(Icons.Rounded.DataSaverOn, t("استخدام بيانات أقل للمكالمات"), t("تقليل استهلاك الشبكة عندما تكون جودة الاتصال محدودة"), callSaver) {
-            callSaver = it; prefs.edit().putBoolean("call_data_saver", it).apply()
-        }
+        SettingsToggle(Icons.Rounded.DataSaverOn, t("استخدام بيانات أقل للمكالمات"), t("تقليل استهلاك الشبكة عندما تكون جودة الاتصال محدودة"), callSaver) { callSaver = it; prefs.edit().putBoolean("call_data_saver", it).apply() }
     }
 
     if (showQuality) {
         AlertDialog(
             onDismissRequest = { showQuality = false },
             title = { Text(t("جودة تحميل الوسائط")) },
-            text = {
-                Column {
-                    ChoiceRow(t("جودة قياسية"), uploadQuality == "standard") { uploadQuality = "standard"; prefs.edit().putString("media_upload_quality", uploadQuality).apply(); showQuality = false }
-                    ChoiceRow(t("جودة HD"), uploadQuality == "hd") { uploadQuality = "hd"; prefs.edit().putString("media_upload_quality", uploadQuality).apply(); showQuality = false }
-                }
-            },
+            text = { Column {
+                ChoiceRow(t("جودة قياسية"), uploadQuality == "standard") { uploadQuality = "standard"; prefs.edit().putString("media_upload_quality", uploadQuality).apply(); showQuality = false }
+                ChoiceRow(t("جودة HD"), uploadQuality == "hd") { uploadQuality = "hd"; prefs.edit().putString("media_upload_quality", uploadQuality).apply(); showQuality = false }
+            } },
             confirmButton = { TextButton(onClick = { showQuality = false }) { Text(t("إغلاق")) } },
         )
     }
@@ -336,30 +278,17 @@ fun StorageDataSettingsScreen(onBack: () -> Unit) {
 fun HelpSettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
     val context = LocalContext.current
     var dialog by remember { mutableStateOf<String?>(null) }
-
     SettingsPage(t("المساعدة"), onBack) {
         SettingsRow(Icons.Rounded.HelpOutline, t("مركز المساعدة"), t("أسئلة شائعة حول الحساب والرسائل والمكالمات")) { dialog = "help" }
-        SettingsRow(Icons.Rounded.Phone, t("تواصل معنا"), t("فتح محادثة دعم عبر واتساب")) {
-            runCatching {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/966567638840")))
-            }
-        }
+        SettingsRow(Icons.Rounded.Phone, t("تواصل معنا"), t("فتح محادثة دعم عبر واتساب")) { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/966567638840"))) } }
         SettingsRow(Icons.Rounded.PrivacyTip, t("الشروط وسياسة الخصوصية"), t("كيف يتعامل ZoolChat مع بياناتك")) { dialog = "privacy" }
         SettingsRow(Icons.Rounded.Info, t("معلومات عن التطبيق"), "ZoolChat • v${BuildConfig.VERSION_NAME}", onAbout)
     }
-
     if (dialog != null) {
         AlertDialog(
             onDismissRequest = { dialog = null },
             title = { Text(if (dialog == "help") t("مركز المساعدة") else t("الخصوصية")) },
-            text = {
-                Text(
-                    if (dialog == "help")
-                        t("إذا واجهتك مشكلة في تسجيل الدخول أو الرسائل أو المكالمات أو الحالات، تأكد أولاً من اتصال الإنترنت وصلاحيات الإشعارات والميكروفون والكاميرا. إذا استمرت المشكلة استخدم خيار تواصل معنا.")
-                    else
-                        t("يعرض ZoolChat معلومات الملف الشخصي والحضور وفق إعدادات الخصوصية، ولا ينبغي عرض كلمات المرور أو مفاتيح التشفير أو رموز الدخول لأي مستخدم آخر."),
-                )
-            },
+            text = { Text(if (dialog == "help") t("إذا واجهتك مشكلة في تسجيل الدخول أو الرسائل أو المكالمات أو الحالات، تأكد أولاً من اتصال الإنترنت وصلاحيات الإشعارات والميكروفون والكاميرا. إذا استمرت المشكلة استخدم خيار تواصل معنا.") else t("يعرض ZoolChat معلومات الملف الشخصي والحضور وفق إعدادات الخصوصية، ولا يعرض كلمات المرور أو مفاتيح التشفير أو رموز الدخول لأي مستخدم آخر.")) },
             confirmButton = { TextButton(onClick = { dialog = null }) { Text(t("إغلاق")) } },
         )
     }
@@ -367,117 +296,69 @@ fun HelpSettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
 
 @Composable
 private fun SettingsPage(title: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .navigationBarsPadding(),
-    ) {
-        SettingsTopBar(title, onBack)
-        content()
-        Spacer(Modifier.height(18.dp))
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        SettingsTopBar(title, onBack); content(); Spacer(Modifier.height(18.dp))
     }
 }
 
 @Composable
 private fun SettingsTopBar(title: String, onBack: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = ZoolDimens.ToolbarHeight).padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(ZoolDimens.TouchTarget)) {
-            Icon(Icons.Rounded.ArrowBack, contentDescription = t("رجوع"), modifier = Modifier.size(21.dp))
-        }
+    Row(Modifier.fillMaxWidth().heightIn(min = ZoolDimens.ToolbarHeight).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack, modifier = Modifier.size(ZoolDimens.TouchTarget)) { Icon(Icons.Rounded.ArrowBack, contentDescription = t("رجوع"), modifier = Modifier.size(SettingsItemIconSize)) }
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
 private fun SettingsSection(text: String) {
-    Text(
-        text,
-        modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
+    Text(text, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
 }
 
 @Composable
-private fun SettingsRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    danger: Boolean = false,
-) {
+private fun SettingsRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, danger: Boolean = false) {
     val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 58.dp).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(12.dp))
+    Row(Modifier.fillMaxWidth().heightIn(min = 62.dp).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(SettingsItemIconSize)); Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Icon(Icons.Rounded.ChevronLeft, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .32f))
+        Icon(Icons.Rounded.ChevronLeft, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .32f))
     }
 }
 
 @Composable
 private fun SettingsInfoRow(icon: ImageVector, title: String, subtitle: String) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(SettingsItemIconSize)); Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium); Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
 @Composable
 private fun SettingsToggle(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(SettingsItemIconSize)); Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium); Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
 @Composable
-private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f))
-        RadioButton(selected = selected, onClick = onClick)
+        Text(label, modifier = Modifier.weight(1f)); RadioButton(selected = selected, onClick = onClick)
     }
 }
 
 @Composable
 private fun SettingsProfilePhoto(name: String, photoUri: String, size: androidx.compose.ui.unit.Dp) {
     val context = LocalContext.current
-    val bitmap = remember(photoUri) {
-        if (photoUri.isBlank()) null else runCatching {
-            context.contentResolver.openInputStream(Uri.parse(photoUri)).use { input -> BitmapFactory.decodeStream(input)?.asImageBitmap() }
-        }.getOrNull()
-    }
-    if (bitmap != null) {
-        Image(bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size).clip(CircleShape))
-    } else {
-        Avatar(name, size = size, online = false)
-    }
+    val bitmap = remember(photoUri) { if (photoUri.isBlank()) null else runCatching { context.contentResolver.openInputStream(Uri.parse(photoUri)).use { input -> BitmapFactory.decodeStream(input)?.asImageBitmap() } }.getOrNull() }
+    if (bitmap != null) Image(bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size).clip(CircleShape)) else Avatar(name, size = size, online = false)
 }
 
-private fun directoryBytes(root: File): Long = runCatching {
-    root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-}.getOrDefault(0L)
-
+private fun directoryBytes(root: File): Long = runCatching { root.walkTopDown().filter { it.isFile }.sumOf { it.length() } }.getOrDefault(0L)
 private fun humanBytes(bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB")
