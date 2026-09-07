@@ -51,6 +51,46 @@ export function installProfileV032(app:Express){
   res.json({user:selfJson(r.rows[0])});
  });
 
+ // v0.32 directory search: username/display name are discoverable; email and mobile are exact-match only.
+ // Registration email is never returned to another user, even when it is used to locate the account.
+ app.get('/api/users/search',requireAuth,async(req,res)=>{
+  const q=String(req.query.q??'').trim();
+  if(q.length<3||q.length>254)return res.json({users:[]});
+  const uid=req.zoolUser!.id;
+  const username=q.replace(/^@/,'').toLowerCase();
+  const display=q.toLowerCase();
+  const exactEmail=/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(q)?q.toLowerCase():null;
+  const digits=q.replace(/[^0-9+]/g,'');
+  const exactPhone=/^\+[1-9]\d{5,14}$/.test(digits)?digits:null;
+  const r=await pool.query(`SELECT u.id,u.phone_e164,u.display_name,u.username,
+   CASE WHEN COALESCE(p.profile_photo_visibility,'contacts')='everyone' OR
+    (COALESCE(p.profile_photo_visibility,'contacts')='contacts' AND EXISTS(
+     SELECT 1 FROM chat_members a JOIN chat_members b ON b.chat_id=a.chat_id WHERE a.user_id=$1 AND b.user_id=u.id
+    )) THEN COALESCE('/api/media/'||u.profile_photo_media_id::text,u.photo_url) ELSE NULL END photo_url,
+   CASE
+    WHEN u.username IS NOT NULL AND lower(u.username)=lower($2) THEN 0
+    WHEN lower(u.display_name)=lower($3) THEN 1
+    WHEN $4::text IS NOT NULL AND lower(u.email)=lower($4) THEN 2
+    WHEN $5::text IS NOT NULL AND u.phone_e164=$5 THEN 3
+    WHEN u.username IS NOT NULL AND lower(u.username) LIKE lower($2)||'%' THEN 4
+    ELSE 5 END rank
+   FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id
+   WHERE u.id<>$1 AND u.account_status='active' AND (
+    (u.username IS NOT NULL AND lower(u.username) LIKE lower($2)||'%') OR
+    lower(u.display_name) LIKE '%'||lower($3)||'%' OR
+    ($4::text IS NOT NULL AND lower(u.email)=lower($4)) OR
+    ($5::text IS NOT NULL AND u.phone_e164=$5)
+   ) AND NOT EXISTS(SELECT 1 FROM blocks bl WHERE (bl.blocker_id=$1 AND bl.blocked_id=u.id) OR (bl.blocker_id=u.id AND bl.blocked_id=$1))
+   ORDER BY rank,lower(u.display_name),lower(u.username) NULLS LAST LIMIT 30`,[uid,username,display,exactEmail,exactPhone]);
+  res.json({users:r.rows.map(x=>({
+   userId:x.id,
+   phoneE164:exactPhone&&x.phone_e164===exactPhone?exactPhone:null,
+   displayName:x.display_name,
+   username:x.username,
+   photoUrl:x.photo_url,
+  }))});
+ });
+
  app.put('/api/me',requireAuth,async(req,res)=>{
   const b=z.object({
    displayName:z.string().trim().min(1).max(80).optional(),

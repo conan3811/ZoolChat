@@ -143,6 +143,17 @@ function mediaJson(r: any) {
   if (!r?.media_id) return null;
   return { id: r.media_id, url: `/api/media/${r.media_id}`, mime: r.media_mime, name: r.media_name, size: Number(r.media_size ?? 0) };
 }
+async function messageReactionMap(messageIds: string[], viewerId: string) {
+  const out = new Map<string, Array<{emoji:string,count:number,reactedByMe:boolean}>>();
+  if (!messageIds.length) return out;
+  const r = await pool.query(`SELECT message_id,emoji,count(*)::int count,bool_or(user_id=$2) reacted_by_me FROM message_reactions WHERE message_id=ANY($1::uuid[]) GROUP BY message_id,emoji ORDER BY message_id,emoji`, [messageIds, viewerId]);
+  for (const row of r.rows) {
+    const id = String(row.message_id); const list = out.get(id) ?? [];
+    list.push({emoji:String(row.emoji),count:Number(row.count),reactedByMe:Boolean(row.reacted_by_me)}); out.set(id,list);
+  }
+  return out;
+}
+
 function messageJson(r: any) {
   return {
     id: r.id,
@@ -157,6 +168,7 @@ function messageJson(r: any) {
     status: r.status ?? 'sent',
     encrypted: Boolean(r.encrypted),
     cryptoVersion: Number(r.crypto_version ?? 0),
+    reactions: Array.isArray(r.reactions) ? r.reactions : [],
     media: mediaJson(r),
   };
 }
@@ -347,6 +359,7 @@ app.get('/api/users/:id/e2ee-key', requireAuth, async (req,res)=>{
   const x=r.rows[0];res.json({userId:x.id,displayName:x.display_name,algorithm:x.algorithm,publicKeyB64:x.public_key_b64,fingerprintSha256:x.fingerprint_sha256,updatedAt:new Date(x.updated_at).toISOString()});
 });
 
+
 app.post('/api/media', mediaRateLimit, requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file_required' });
   const storageName = req.file.filename || `${randomUUID()}${path.extname(req.file.originalname).slice(0, 12)}`;
@@ -387,7 +400,7 @@ app.get('/api/chats', requireAuth, async (req, res) => {
   const uid = req.zoolUser!.id;
   const r = await pool.query(`
     SELECT c.id,c.type,c.title,dc.user_a,dc.user_b,
-      (SELECT CASE WHEN m.encrypted THEN '🔒 رسالة مشفرة' WHEN m.type='text' THEN m.body WHEN m.type='call' THEN '📞 مكالمة' ELSE '📎 '||COALESCE(ma.original_name,m.type) END FROM messages m LEFT JOIN media_assets ma ON ma.id=m.media_id WHERE m.chat_id=c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) last_message,
+      (SELECT CASE WHEN m.encrypted THEN NULL WHEN m.type='text' THEN m.body WHEN m.type='call' THEN '📞 مكالمة' WHEN m.type='image' THEN '📷 صورة' WHEN m.type='video' THEN '🎥 فيديو' WHEN m.type='audio' THEN '🎤 رسالة صوتية' WHEN m.type='sticker' THEN '🖼️ ملصق' WHEN m.type='document' THEN '📄 '||COALESCE(ma.original_name,'مستند') ELSE '📎 مرفق' END FROM messages m LEFT JOIN media_assets ma ON ma.id=m.media_id WHERE m.chat_id=c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) last_message,
       (SELECT created_at FROM messages m WHERE m.chat_id=c.id AND m.deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) last_message_at,
       (SELECT count(*)::int FROM messages m WHERE m.chat_id=c.id AND m.sender_id<>$1 AND m.deleted_at IS NULL AND (cm.last_read_at IS NULL OR m.created_at>cm.last_read_at)) unread
     FROM chats c JOIN chat_members cm ON cm.chat_id=c.id AND cm.user_id=$1 LEFT JOIN direct_chats dc ON dc.chat_id=c.id
@@ -425,7 +438,8 @@ app.get('/api/chats/:id/messages', requireAuth, async (req, res) => {
     ORDER BY m.created_at DESC,m.id DESC LIMIT $4`, [id, uid, before ? before.toISOString() : null, limit + 1]);
   const hasMore = r.rows.length > limit;
   const pageRows = r.rows.slice(0, limit).reverse();
-  const messages = pageRows.map(messageJson);
+  const reactionMap = await messageReactionMap(pageRows.map(x=>String(x.id)), uid);
+  const messages = pageRows.map(row=>messageJson({...row,reactions:reactionMap.get(String(row.id))??[]}));
   const nextCursor = hasMore && pageRows.length ? new Date(pageRows[0].created_at).toISOString() : null;
   res.json({ messages, hasMore, nextCursor });
 });
@@ -438,7 +452,7 @@ app.get('/api/chats/:id/search', requireAuth, async (req, res) => {
 
 app.post('/api/chats/:id/messages', messageRateLimit, requireAuth, async (req, res) => {
   const chatId = String(req.params.id), uid = req.zoolUser!.id; if (!(await membership(chatId, uid))) return res.status(403).json({ error: 'not_member' });
-  const b = z.object({ clientId: z.string().min(8).max(100), type: z.enum(['text','image','video','audio','document']).default('text'), body: z.string().max(20000).default(''), mediaId: z.string().uuid().optional(), encrypted:z.boolean().default(false), cryptoVersion:z.number().int().min(0).max(10).default(0) }).parse(req.body);
+  const b = z.object({ clientId: z.string().min(8).max(100), type: z.enum(['text','image','video','audio','document','sticker']).default('text'), body: z.string().max(20000).default(''), mediaId: z.string().uuid().optional(), encrypted:z.boolean().default(false), cryptoVersion:z.number().int().min(0).max(10).default(0) }).parse(req.body);
   if (b.type === 'text' && !b.body.trim()) return res.status(400).json({ error: 'text_required' });
   if (b.type !== 'text' && !b.mediaId) return res.status(400).json({ error: 'media_required' });
   if (b.mediaId) { const owned = await pool.query(`SELECT 1 FROM media_assets WHERE id=$1 AND owner_id=$2`, [b.mediaId, uid]); if (!owned.rowCount) return res.status(403).json({ error: 'media_not_owned' }); }
@@ -469,19 +483,46 @@ app.post('/api/chats/:id/messages', messageRateLimit, requireAuth, async (req, r
 app.put('/api/chats/:id/messages/:messageId', requireAuth, async (req,res)=>{
   const chatId=String(req.params.id),uid=req.zoolUser!.id;if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
   const b=z.object({body:z.string().min(1).max(20000),encrypted:z.boolean().default(false),cryptoVersion:z.number().int().min(0).max(10).default(0)}).parse(req.body);
-  const r=await pool.query(`UPDATE messages SET body=$4,encrypted=$5,crypto_version=$6,edited_at=now() WHERE id=$1 AND chat_id=$2 AND sender_id=$3 AND type='text' AND deleted_at IS NULL RETURNING *`,[req.params.messageId,chatId,uid,b.body,b.encrypted,b.cryptoVersion]);
-  if(!r.rowCount)return res.status(404).json({error:'message_not_found'});
-  const peers=await pool.query(`SELECT user_id FROM chat_members WHERE chat_id=$1 AND user_id<>$2`,[chatId,uid]);for(const p of peers.rows)emitTo(p.user_id,{type:'message.edited',data:messageJson({...r.rows[0],status:'sent'})});
+  const current=await pool.query(`SELECT * FROM messages WHERE id=$1 AND chat_id=$2 AND sender_id=$3 AND type='text' AND deleted_at IS NULL`,[req.params.messageId,chatId,uid]);
+  if(!current.rowCount)return res.status(404).json({error:'message_not_found'});
+  if(Date.now()-new Date(current.rows[0].created_at).getTime()>15*60*1000)return res.status(409).json({error:'edit_window_expired'});
+  const r=await pool.query(`UPDATE messages SET body=$4,encrypted=$5,crypto_version=$6,edited_at=now() WHERE id=$1 AND chat_id=$2 AND sender_id=$3 RETURNING *`,[req.params.messageId,chatId,uid,b.body,b.encrypted,b.cryptoVersion]);
+  const payload=messageJson({...r.rows[0],status:'sent',reactions:[]});
+  const peers=await pool.query(`SELECT user_id FROM chat_members WHERE chat_id=$1 AND user_id<>$2`,[chatId,uid]);for(const p of peers.rows)emitTo(p.user_id,{type:'message.edited',data:payload});
   const editTokens=await fcmTokens(peers.rows.map(x=>x.user_id)); await sendData(editTokens,{type:'chat_sync',chatId},false);
-  res.json({message:messageJson({...r.rows[0],status:'sent'})});
+  res.json({message:payload});
 });
 app.delete('/api/chats/:id/messages/:messageId', requireAuth, async (req,res)=>{
   const chatId=String(req.params.id),uid=req.zoolUser!.id;if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
-  const r=await pool.query(`UPDATE messages SET body='',deleted_at=now() WHERE id=$1 AND chat_id=$2 AND sender_id=$3 AND deleted_at IS NULL RETURNING *`,[req.params.messageId,chatId,uid]);
-  if(!r.rowCount)return res.status(404).json({error:'message_not_found'});
-  const peers=await pool.query(`SELECT user_id FROM chat_members WHERE chat_id=$1 AND user_id<>$2`,[chatId,uid]);for(const p of peers.rows)emitTo(p.user_id,{type:'message.deleted',data:{chatId,messageId:req.params.messageId}});
+  const current=await pool.query(`SELECT m.*,c.type chat_type,cm.role FROM messages m JOIN chats c ON c.id=m.chat_id JOIN chat_members cm ON cm.chat_id=m.chat_id AND cm.user_id=$3 WHERE m.id=$1 AND m.chat_id=$2 AND m.deleted_at IS NULL`,[req.params.messageId,chatId,uid]);
+  if(!current.rowCount)return res.status(404).json({error:'message_not_found'});
+  const m=current.rows[0];
+  const adminCanDelete=m.chat_type==='group'&&['owner','admin'].includes(String(m.role));
+  if(m.sender_id!==uid&&!adminCanDelete)return res.status(403).json({error:'delete_not_allowed'});
+  if(Date.now()-new Date(m.created_at).getTime()>2*24*60*60*1000)return res.status(409).json({error:'delete_window_expired'});
+  const r=await pool.query(`UPDATE messages SET body='',deleted_at=now() WHERE id=$1 AND chat_id=$2 RETURNING *`,[req.params.messageId,chatId]);
+  const peers=await pool.query(`SELECT user_id FROM chat_members WHERE chat_id=$1 AND user_id<>$2`,[chatId,uid]);for(const p of peers.rows)emitTo(p.user_id,{type:'message.deleted',data:{chatId,messageId:req.params.messageId,deletedBy:uid,admin:m.sender_id!==uid}});
   const deleteTokens=await fcmTokens(peers.rows.map(x=>x.user_id)); await sendData(deleteTokens,{type:'chat_sync',chatId},false);
   res.json({ok:true,message:messageJson({...r.rows[0],status:'sent'})});
+});
+
+app.put('/api/chats/:id/messages/:messageId/reaction', requireAuth, async (req,res)=>{
+  const chatId=String(req.params.id),uid=req.zoolUser!.id;if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
+  const emoji=z.object({emoji:z.string().trim().min(1).max(16)}).parse(req.body).emoji;
+  const exists=await pool.query(`SELECT 1 FROM messages WHERE id=$1 AND chat_id=$2 AND deleted_at IS NULL`,[req.params.messageId,chatId]);if(!exists.rowCount)return res.status(404).json({error:'message_not_found'});
+  await pool.query(`INSERT INTO message_reactions(message_id,user_id,emoji) VALUES($1,$2,$3) ON CONFLICT(message_id,user_id) DO UPDATE SET emoji=EXCLUDED.emoji,created_at=now()`,[req.params.messageId,uid,emoji]);
+  const reactions=(await messageReactionMap([String(req.params.messageId)],uid)).get(String(req.params.messageId))??[];
+  const members=await pool.query(`SELECT user_id FROM chat_members WHERE chat_id=$1`,[chatId]);for(const p of members.rows)emitTo(p.user_id,{type:'message.reaction',data:{chatId,messageId:req.params.messageId}});
+  const tokens=await fcmTokens(members.rows.filter(x=>x.user_id!==uid).map(x=>x.user_id));await sendData(tokens,{type:'chat_sync',chatId},false);
+  res.json({ok:true,reactions});
+});
+app.delete('/api/chats/:id/messages/:messageId/reaction', requireAuth, async (req,res)=>{
+  const chatId=String(req.params.id),uid=req.zoolUser!.id;if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
+  await pool.query(`DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2`,[req.params.messageId,uid]);
+  const reactions=(await messageReactionMap([String(req.params.messageId)],uid)).get(String(req.params.messageId))??[];
+  const members=await pool.query(`SELECT user_id FROM chat_members WHERE chat_id=$1`,[chatId]);for(const p of members.rows)emitTo(p.user_id,{type:'message.reaction',data:{chatId,messageId:req.params.messageId}});
+  const tokens=await fcmTokens(members.rows.filter(x=>x.user_id!==uid).map(x=>x.user_id));await sendData(tokens,{type:'chat_sync',chatId},false);
+  res.json({ok:true,reactions});
 });
 
 app.post('/api/chats/:id/delivered', requireAuth, async (req, res) => {
