@@ -71,6 +71,8 @@ jobs:
           python3 -m py_compile scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py
           python3 scripts/apply_v032_feedback_round2.py
           python3 scripts/fix_v032_feedback_round2_patch.py
+          echo '--- generated E2EE routes ---'
+          grep -n -E "e2ee/(self-key|backup)|e2ee_key_missing|e2ee_backup" server/src/index.ts || true
           git diff --check
           git status --short
 
