@@ -32,21 +32,21 @@ fun ContactsDirectoryScreen(
     val shown = if (query.trim().length >= 3) searchResults else contacts
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "رجوع") }
+            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, t("رجوع")) }
             Text(t("جهات اتصال ZoolChat"), style = MaterialTheme.typography.titleLarge)
         }
         OutlinedTextField(
             value = query,
             onValueChange = { query = it; onSearch(it) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-            placeholder = { Text(t("ابحث عن مستخدم باسم @username")) },
+            placeholder = { Text(t("ابحث بالاسم أو اليوزر نيم أو البريد أو رقم الجوال")) },
             leadingIcon = { Icon(Icons.Rounded.Search, null) },
             singleLine = true,
         )
         if (shown.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    if (query.trim().length >= 3) t("لا يوجد مستخدم مطابق") else t("لا توجد جهات اتصال مسجلة بعد. يمكنك البحث عن أي مستخدم عن طريق @username."),
+                    if (query.trim().length >= 3) t("لا يوجد مستخدم مطابق") else t("ابحث عن مستخدم بالاسم الظاهر أو @username أو البريد الإلكتروني أو رقم الجوال."),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -62,8 +62,8 @@ fun ContactsDirectoryScreen(
                         Text(c.localName)
                         Text(c.username?.let { "@$it" } ?: c.phoneE164, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { onCall(c) }) { Icon(Icons.Rounded.Phone, "اتصال") }
-                    IconButton(onClick = { onChat(c) }) { Icon(Icons.Rounded.Chat, "محادثة") }
+                    IconButton(onClick = { onCall(c) }) { Icon(Icons.Rounded.Phone, t("اتصال")) }
+                    IconButton(onClick = { onChat(c) }) { Icon(Icons.Rounded.Chat, t("محادثة")) }
                 }
             }
         }
