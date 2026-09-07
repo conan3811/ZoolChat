@@ -43,14 +43,11 @@ async function issue(userId:string,email:string,purpose:'verify'|'recover') {
     transport.close();
   } catch {
     await pool.query('UPDATE email_challenges SET consumed_at=now() WHERE id=$1',[challenge]);
-    // Never log recipients, codes, SMTP secrets, or provider response payloads.
     console.warn('email_delivery_failed');
   }
 }
 
 export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>void) {
-  // Registered before legacy directory routes. Display name and username are discoverable;
-  // email/mobile require exact input and are never disclosed in results.
   app.get('/api/users/search',requireAuth,accountLimiter,async(req,res)=>{
     const q=String(req.query.q??'').trim();
     if(q.length<3||q.length>254)return res.json({users:[]});
@@ -121,8 +118,14 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
     onSessionsRevoked(id);res.json({ok:true});
   });
 
-  // In-account password change. A successful change revokes sessions/devices so the user
-  // signs in again with the new password, matching the recovery security model.
+  app.post('/api/me/password/verify',requireAuth,accountLimiter,async(req,res)=>{
+    const b=z.object({password:z.string().min(8).max(128)}).safeParse(req.body);
+    if(!b.success)return res.status(400).json({error:'invalid_request'});
+    const r=await pool.query('SELECT password_hash FROM user_credentials WHERE user_id=$1',[req.zoolUser!.id]);
+    if(!r.rowCount||!(await verifyPassword(b.data.password,String(r.rows[0].password_hash))))return res.status(403).json({error:'invalid_password'});
+    res.json({ok:true});
+  });
+
   app.put('/api/me/password',requireAuth,accountLimiter,async(req,res)=>{
     const b=z.object({currentPassword:z.string().min(8).max(128),newPassword:z.string().min(8).max(128)}).safeParse(req.body);
     if(!b.success)return res.status(400).json({error:'invalid_request'});
@@ -184,8 +187,6 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
     res.json({emailAvailable:!r.rows.some(x=>x.email?.toLowerCase()===b.data.email),usernameAvailable:!r.rows.some(x=>x.username?.toLowerCase()===b.data.username?.toLowerCase())});
   });
 
-  // The server stores only password-derived ciphertext. It never receives the account password
-  // or plaintext E2EE private identity key.
   app.get('/api/e2ee/self-key',requireAuth,accountLimiter,async(req,res)=>{
     const r=await pool.query('SELECT algorithm,public_key_b64,fingerprint_sha256,updated_at FROM user_crypto_keys WHERE user_id=$1',[req.zoolUser!.id]);
     if(!r.rowCount)return res.status(404).json({error:'e2ee_key_missing'});
