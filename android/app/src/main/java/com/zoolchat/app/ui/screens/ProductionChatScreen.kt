@@ -1,5 +1,6 @@
 package com.zoolchat.app.ui.screens
 
+import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -34,8 +35,8 @@ import com.zoolchat.app.media.VoiceNoteRecorder
 import com.zoolchat.app.network.ApiClient
 import com.zoolchat.app.ui.components.Avatar
 import com.zoolchat.app.ui.i18n.t
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val Blue = Color(0xFF53BDEB)
 private val Bright = Color(0xFF25D366)
@@ -71,11 +72,14 @@ fun ProductionChatScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val chatPrefs = remember { context.getSharedPreferences("zoolchat_user_settings", Context.MODE_PRIVATE) }
     val mediaRepo = remember(api,e2ee,peerUserId) { MediaRepository(context.applicationContext, api, e2ee, peerUserId) }
     var text by remember { mutableStateOf("") }
     var showAttachments by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
+    var showMuteDialog by remember { mutableStateOf(false) }
+    var muteUntil by remember(chatId) { mutableLongStateOf(chatPrefs.getLong("mute_until_$chatId", 0L)) }
     var searchMode by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     val list = rememberLazyListState()
@@ -84,6 +88,13 @@ fun ProductionChatScreen(
     var showSecurity by remember { mutableStateOf(false) }
     var peerFingerprint by remember { mutableStateOf<String?>(null) }
     var typingSent by remember { mutableStateOf(false) }
+
+    fun setMute(until: Long) {
+        muteUntil = until
+        chatPrefs.edit().putLong("mute_until_$chatId", until).apply()
+        if (until > System.currentTimeMillis()) com.zoolchat.app.notifications.NotificationHelper.clearMessage(context, chatId)
+        showMuteDialog = false
+    }
 
     LaunchedEffect(peerUserId) {
         if (peerUserId != null) {
@@ -169,6 +180,23 @@ fun ProductionChatScreen(
         }
     }
 
+    if (showMuteDialog) {
+        val now = System.currentTimeMillis()
+        AlertDialog(
+            onDismissRequest = { showMuteDialog = false },
+            title = { Text(t("إشعارات هذه المحادثة")) },
+            text = {
+                Column {
+                    ChoiceRow(t("تشغيل الإشعارات"), muteUntil <= now) { setMute(0L) }
+                    ChoiceRow(t("كتم لمدة 8 ساعات"), muteUntil in (now + 1)..(now + 9L*60*60*1000)) { setMute(now + 8L*60*60*1000) }
+                    ChoiceRow(t("كتم لمدة أسبوع"), muteUntil in (now + 9L*60*60*1000)..(now + 8L*24*60*60*1000)) { setMute(now + 7L*24*60*60*1000) }
+                    ChoiceRow(t("كتم دائماً"), muteUntil == Long.MAX_VALUE) { setMute(Long.MAX_VALUE) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showMuteDialog = false }) { Text(t("إغلاق")) } },
+        )
+    }
+
     if(showSecurity && !isGroup){
         LaunchedEffect(showSecurity,peerUserId){ if(peerUserId!=null) peerFingerprint=runCatching{e2ee.peerFingerprint(peerUserId)}.getOrNull() }
         AlertDialog(onDismissRequest={showSecurity=false},title={Text(t("التشفير ورمز الأمان"))},text={Column{Text(t("هذه المحادثة تستخدم E2EE beta مباشر بين الجهازين."));Spacer(Modifier.height(10.dp));Text(t("بصمة جهازك:"),fontWeight=FontWeight.Bold);Text(e2ee.localFingerprint(),style=MaterialTheme.typography.bodySmall);Spacer(Modifier.height(10.dp));Text(t("بصمة الطرف الآخر:"),fontWeight=FontWeight.Bold);Text(peerFingerprint?:t("جاري التحميل…"),style=MaterialTheme.typography.bodySmall);if(peerUserId!=null&&e2ee.peerKeyChanged(peerUserId)){Spacer(Modifier.height(10.dp));Text(t("⚠ تغيّر مفتاح الطرف الآخر. تحقق من البصمة قبل متابعة المحادثة الحساسة."),color=MaterialTheme.colorScheme.error)}}},confirmButton={TextButton(onClick={peerUserId?.let{e2ee.acknowledgePeerKey(it)};showSecurity=false}){Text(t("تم"))}})
@@ -176,7 +204,7 @@ fun ProductionChatScreen(
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.fillMaxWidth().height(60.dp).background(MaterialTheme.colorScheme.background).padding(horizontal=4.dp), verticalAlignment=Alignment.CenterVertically) {
-            IconButton(onClick=onBack) { Icon(Icons.Rounded.ArrowBack,"رجوع",tint=MaterialTheme.colorScheme.onSurface) }
+            IconButton(onClick=onBack) { Icon(Icons.Rounded.ArrowBack,t("رجوع"),tint=MaterialTheme.colorScheme.onSurface) }
             Box(Modifier.clickable { if(isGroup) onOpenGroupInfo() else onOpenProfile() }) { Avatar(title,38.dp) }
             Spacer(Modifier.width(8.dp))
             Column(modifier=Modifier.weight(1f).clickable { if(isGroup) onOpenGroupInfo() else onOpenProfile() }) {
@@ -190,13 +218,13 @@ fun ProductionChatScreen(
                 if (statusText.isNotBlank()) Text(statusText,color=if(peerTyping||peerPresence?.online==true) Bright else MaterialTheme.colorScheme.onSurface.copy(alpha=.68f),style=MaterialTheme.typography.labelSmall,maxLines=1)
             }
             if (isGroup) {
-                IconButton(onClick=onOpenGroupInfo) { Icon(Icons.Rounded.Group,"معلومات المجموعة",tint=MaterialTheme.colorScheme.onSurface) }
+                IconButton(onClick=onOpenGroupInfo) { Icon(Icons.Rounded.Group,t("معلومات المجموعة"),tint=MaterialTheme.colorScheme.onSurface) }
             } else {
-                IconButton(onClick=onVideoCall) { Icon(Icons.Rounded.Videocam,"فيديو",tint=MaterialTheme.colorScheme.onSurface) }
-                IconButton(onClick=onVoiceCall) { Icon(Icons.Rounded.PhoneInTalk,"صوت",tint=MaterialTheme.colorScheme.onSurface) }
+                IconButton(onClick=onVideoCall) { Icon(Icons.Rounded.Videocam,t("فيديو"),tint=MaterialTheme.colorScheme.onSurface) }
+                IconButton(onClick=onVoiceCall) { Icon(Icons.Rounded.PhoneInTalk,t("صوت"),tint=MaterialTheme.colorScheme.onSurface) }
             }
             Box {
-                IconButton(onClick={showMore=true}) { Icon(Icons.Rounded.MoreVert,"المزيد",tint=MaterialTheme.colorScheme.onSurface) }
+                IconButton(onClick={showMore=true}) { Icon(Icons.Rounded.MoreVert,t("المزيد"),tint=MaterialTheme.colorScheme.onSurface) }
                 DropdownMenu(expanded=showMore,onDismissRequest={showMore=false},modifier=Modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
                     if (isGroup) {
                         ChatMenuItem(Icons.Rounded.Group,t("معلومات المجموعة")) { showMore=false; onOpenGroupInfo() }
@@ -206,9 +234,9 @@ fun ProductionChatScreen(
                         showMore=false
                         if(isGroup) onOpenGroupInfo() else onOpenProfile()
                     }
-                    ChatMenuItem(Icons.Rounded.NotificationsOff,t("كتم الإشعارات")) {
+                    ChatMenuItem(if(muteUntil>System.currentTimeMillis()) Icons.Rounded.Notifications else Icons.Rounded.NotificationsOff, if(muteUntil>System.currentTimeMillis()) t("إعدادات الإشعارات") else t("كتم الإشعارات")) {
                         showMore=false
-                        if(isGroup) onOpenGroupInfo() else onOpenProfile()
+                        showMuteDialog=true
                     }
                     if (isGroup) {
                         ChatMenuItem(Icons.Rounded.Timer,t("الرسائل المختفية")) { showMore=false; onOpenGroupInfo() }
@@ -272,7 +300,7 @@ fun ProductionChatScreen(
                             else MediaBubble(m,mediaRepo)
                             Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically) {
                                 if (m.editedAt != null && !m.deleted) {
-                                    Text(t("تم التعديل • "), color=MaterialTheme.colorScheme.onSurface.copy(alpha=.6f), style=MaterialTheme.typography.labelSmall)
+                                    Text(t("تم التعديل • "), color=MaterialTheme.colorScheme.onSurface.copy(alpha=.6f), style = MaterialTheme.typography.labelSmall)
                                 }
                                 Text(m.createdAt.substringAfter('T').take(5),color=MaterialTheme.colorScheme.onSurface.copy(alpha=.75f),style=MaterialTheme.typography.labelSmall)
                                 if(mine){Spacer(Modifier.width(4.dp));Receipt(m.status)}
