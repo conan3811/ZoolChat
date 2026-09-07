@@ -15,15 +15,17 @@ jobs:
         with:
           packages: platform-tools
       - run: sdkmanager "build-tools;37.0.0"
-      - name: Package signing tools
+      - name: Package signing and verification tools
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/apk-tools/lib /tmp/apk-tools/lib64
-          zipalign_bin="$ANDROID_SDK_ROOT/build-tools/37.0.0/zipalign"
-          cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" /tmp/apk-tools/
+          bt="$ANDROID_SDK_ROOT/build-tools/37.0.0"
+          zipalign_bin="$bt/zipalign"
+          cp "$bt/apksigner" /tmp/apk-tools/
+          cp "$bt/aapt2" /tmp/apk-tools/
           cp "$zipalign_bin" /tmp/apk-tools/
-          cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/lib/apksigner.jar" /tmp/apk-tools/lib/
+          cp "$bt/lib/apksigner.jar" /tmp/apk-tools/lib/
           ldd "$zipalign_bin" > /tmp/zipalign-ldd.txt
           libcxx="$(grep 'libc++.so =>' /tmp/zipalign-ldd.txt | sed -E 's/.*=> ([^ ]+).*/\1/')"
           test -f "$libcxx"
@@ -33,4 +35,4 @@ jobs:
           name: android-apk-signing-tools
           path: /tmp/apk-tools
           if-no-files-found: error
-# refreshed for local v0.32 Firebase packaging verification with exact zipalign runtime
+# Includes aapt2 for final manifest/package verification.
