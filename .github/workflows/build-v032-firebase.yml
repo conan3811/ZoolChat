@@ -56,4 +56,4 @@ jobs:
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
 
-# Triggered after completing the v0.32 settings implementation and validation.
+# Final Firebase build trigger after the v0.32 account, search, mute, story and E2EE fixes passed validation.
