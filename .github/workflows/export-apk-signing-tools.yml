@@ -20,15 +20,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/apk-tools/lib /tmp/apk-tools/lib64
+          zipalign_bin="$ANDROID_SDK_ROOT/build-tools/37.0.0/zipalign"
           cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" /tmp/apk-tools/
-          cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/zipalign" /tmp/apk-tools/
+          cp "$zipalign_bin" /tmp/apk-tools/
           cp "$ANDROID_SDK_ROOT/build-tools/37.0.0/lib/apksigner.jar" /tmp/apk-tools/lib/
-          libcxx="$(find "$ANDROID_SDK_ROOT" -type f -name 'libc++.so' -print -quit)"
-          test -n "$libcxx"
+          ldd "$zipalign_bin" > /tmp/zipalign-ldd.txt
+          libcxx="$(grep 'libc++.so =>' /tmp/zipalign-ldd.txt | sed -E 's/.*=> ([^ ]+).*/\1/')"
+          test -f "$libcxx"
           cp "$libcxx" /tmp/apk-tools/lib64/libc++.so
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk-signing-tools
           path: /tmp/apk-tools
           if-no-files-found: error
-# refreshed for local v0.32 Firebase packaging verification with zipalign runtime
+# refreshed for local v0.32 Firebase packaging verification with exact zipalign runtime
