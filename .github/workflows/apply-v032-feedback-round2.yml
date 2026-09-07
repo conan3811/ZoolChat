@@ -4,8 +4,6 @@ on:
   push:
     branches: [zoolchat-v0.32-development]
     paths:
-      - 'scripts/apply_v032_feedback_round2.py'
-      - 'scripts/fix_v032_feedback_round2_patch.py'
       - '.github/workflows/apply-v032-feedback-round2.yml'
   workflow_dispatch:
 
@@ -135,7 +133,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf scripts/__pycache__
-          rm -f scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py .github/workflows/apply-v032-feedback-round2.yml
+          # GitHub Actions' token can push source changes but cannot update workflow files.
+          # Restore every workflow file to HEAD before staging; workflow cleanup is done later
+          # through the authenticated GitHub connection after the validated source commit lands.
+          git restore --source=HEAD -- .github/workflows
+          rm -f scripts/apply_v032_feedback_round2.py scripts/fix_v032_feedback_round2_patch.py
           git add -A
           git diff --cached --check
           if git diff --cached --quiet; then
