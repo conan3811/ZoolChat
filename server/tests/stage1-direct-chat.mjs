@@ -1,3 +1,4 @@
+// Stage-one regression: search-result Message action must remain idempotent and immediately usable.
 import assert from 'node:assert/strict';
 import { randomUUID, randomInt } from 'node:crypto';
 import { pool } from '../dist/db.js';
