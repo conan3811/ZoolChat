@@ -31,4 +31,4 @@ jobs:
           name: ZoolChat-v032-latest-no-firebase
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
-# Rebuild after legacy-compatible profile setup and authoritative username identity fix.
+# Rebuild after profile setup compatibility, username identity sync, and Compose import fix.
