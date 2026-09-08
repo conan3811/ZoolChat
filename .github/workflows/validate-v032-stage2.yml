@@ -86,3 +86,4 @@ jobs:
       - name: Compile and lint stage two Android
         working-directory: android
         run: gradle :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+# rerun after the stage-two 2FA Kotlin regex compile repair
