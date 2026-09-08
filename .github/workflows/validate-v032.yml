@@ -62,6 +62,7 @@ jobs:
       MAIL_FROM: ZoolChat Validation <noreply@example.invalid>
       MAIL_REQUIRE_TLS: 'false'
       EMAIL_RATE_LIMIT_PER_15_MINUTES: '100'
+      TWO_FACTOR_RATE_LIMIT_PER_15_MINUTES: '100'
       LIVEKIT_URL: ws://127.0.0.1:7880
       LIVEKIT_API_KEY: ci-test-key
       LIVEKIT_API_SECRET: ci-test-secret-not-for-production
@@ -96,6 +97,7 @@ jobs:
           node tests/smtp-delivery.mjs
           node tests/email-recovery.mjs
           node tests/profile-meeting.mjs
+          node tests/stage2-account-security.mjs
         working-directory: server
   container-image:
     runs-on: ubuntu-latest
@@ -169,4 +171,4 @@ jobs:
             android/app/build/outputs/apk/public/debug/*.apk
             android/app/build/reports/lint-results-publicDebug.*
           if-no-files-found: error
-# validation refresh after profile and username identity repair
+# permanent full validation includes stage-two profile/session/two-factor regressions
