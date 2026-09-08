@@ -31,4 +31,4 @@ jobs:
           name: ZoolChat-v032-latest-no-firebase
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
-# Release base includes generic private Firebase runtime loader; no client config is committed.
+# Release base includes the profile/username identity fix and generic private Firebase runtime loader.
