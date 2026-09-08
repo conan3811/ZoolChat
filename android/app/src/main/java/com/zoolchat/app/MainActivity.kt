@@ -27,6 +27,7 @@ data class IncomingCallNav(val callId: String, val video: Boolean, val autoAccep
 class MainActivity : ComponentActivity() {
     private var incomingCall by mutableStateOf<IncomingCallNav?>(null)
     private var openChatId by mutableStateOf<String?>(null)
+    private var openProfileUsername by mutableStateOf<String?>(null)
     private var sessionPrefs: SharedPreferences? = null
 
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -43,7 +44,7 @@ class MainActivity : ComponentActivity() {
             var themeMode by remember { mutableStateOf(savedMode) }
             ZoolChatTheme(themeMode) {
                 Surface(modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding(), color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
-                    ZoolChatApp(themeMode, { newMode -> themeMode = newMode; prefs.edit().putString("theme_mode", newMode.name).apply() }, incomingCall, { incomingCall = null }, openChatId) { openChatId = null }
+                    ZoolChatApp(themeMode, { newMode -> themeMode = newMode; prefs.edit().putString("theme_mode", newMode.name).apply() }, incomingCall, { incomingCall = null }, openChatId, { openChatId = null }, openProfileUsername) { openProfileUsername = null }
                 }
             }
         }
@@ -88,6 +89,10 @@ class MainActivity : ComponentActivity() {
         if (!id.isNullOrBlank()) incomingCall = IncomingCallNav(id, intent.getBooleanExtra("incoming_call_video", false), intent.getBooleanExtra("incoming_call_accept", false))
         if(intent?.getBooleanExtra("open_meet",false)==true)openChatId="__meet__"
         val chat = intent?.getStringExtra("open_chat_id"); if (!chat.isNullOrBlank()) openChatId = chat
+        val data=intent?.data
+        if(intent?.action==Intent.ACTION_VIEW && data?.scheme=="zoolchat" && data.host=="profile") {
+            data.pathSegments.firstOrNull()?.trim()?.removePrefix("@")?.takeIf{Regex("^[A-Za-z0-9_.]{3,32}$").matches(it)}?.let{openProfileUsername=it}
+        }
     }
 
     private companion object {

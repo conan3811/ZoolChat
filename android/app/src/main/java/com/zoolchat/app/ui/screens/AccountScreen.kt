@@ -24,7 +24,7 @@ import com.zoolchat.app.ui.i18n.t
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private data class DeviceRow(val id:String,val name:String,val lastSeen:String)
+private data class DeviceRow(val id:String,val name:String,val lastSeen:String,val current:Boolean)
 private const val ACCOUNT_ICON_DP = 24
 
 @Composable
@@ -50,6 +50,10 @@ fun AccountScreen(
     var showPassword by remember { mutableStateOf(false) }
     var showPhone by remember { mutableStateOf(false) }
     var showBackup by remember { mutableStateOf(false) }
+    var showTwoFactor by remember { mutableStateOf(false) }
+    var twoFactorEnabled by remember { mutableStateOf(false) }
+    var twoFactorAvailable by remember { mutableStateOf(false) }
+    var pendingRevoke by remember { mutableStateOf<DeviceRow?>(null) }
     var securityNotifications by remember { mutableStateOf(prefs.getBoolean("security_notifications_enabled",true)) }
     var exporting by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -59,9 +63,10 @@ fun AccountScreen(
         exporting=null
     }
     fun safeError(message:String?=null){error=message?:t("تعذر إكمال الطلب")}
-    fun refreshDevices(){scope.launch{runCatching{api.devices()}.onSuccess{arr->devices=(0 until arr.length()).map{i->val o=arr.getJSONObject(i);DeviceRow(o.getString("id"),o.optString("deviceName","Android"),o.optString("lastSeenAt"))}}.onFailure{safeError()}}}
+    fun refreshDevices(){scope.launch{runCatching{api.devices()}.onSuccess{arr->devices=(0 until arr.length()).map{i->val o=arr.getJSONObject(i);DeviceRow(o.getString("id"),o.optString("deviceName","Android"),o.optString("lastSeenAt"),o.optBoolean("current",false))}}.onFailure{safeError()}}}
+    fun refreshTwoFactor(){scope.launch{runCatching{api.twoFactorStatus()}.onSuccess{o->twoFactorEnabled=o.optBoolean("enabled",false);twoFactorAvailable=o.optBoolean("available",false)}.onFailure{safeError()}}}
     fun refreshMe(){scope.launch{runCatching{api.get("/api/me").getJSONObject("user")}.onSuccess{u->email=u.optString("email").takeUnless{it=="null"}.orEmpty();phone=u.optString("phoneE164").takeUnless{it=="null"}.orEmpty();emailVerified=u.optBoolean("emailVerified",false)}.onFailure{safeError()}}}
-    LaunchedEffect(Unit){refreshDevices();refreshMe()}
+    LaunchedEffect(Unit){refreshDevices();refreshMe();refreshTwoFactor()}
 
     Column(Modifier.fillMaxSize()){
         Row(Modifier.fillMaxWidth().heightIn(min=56.dp).padding(horizontal=6.dp),verticalAlignment=Alignment.CenterVertically){
@@ -78,7 +83,7 @@ fun AccountScreen(
                 AccountRow(Icons.Rounded.Key,t("مفاتيح المرور"),t("تسجيل دخول بدون كلمة مرور عند توفر الدعم")){infoDialog="passkey"}
                 AccountRow(Icons.Rounded.Password,t("كلمة المرور"),t("تغيير كلمة مرور الحساب")){showPassword=true}
                 AccountRow(Icons.Rounded.Email,t("البريد الإلكتروني"),if(email.isBlank())t("إضافة بريد إلكتروني") else if(emailVerified)t("موثّق") else t("غير موثّق"),onClick=onEditIdentity)
-                AccountRow(Icons.Rounded.EnhancedEncryption,t("التحقق بخطوتين"),t("طبقة أمان إضافية للحساب")){infoDialog="2fa"}
+                AccountRow(Icons.Rounded.EnhancedEncryption,t("التحقق بخطوتين"),if(twoFactorEnabled)t("مفعّل — رمز بريد بعد كلمة المرور") else t("غير مفعّل — أضف طبقة أمان للحساب")){showTwoFactor=true}
                 AccountToggle(Icons.Rounded.Security,t("إشعارات الأمان"),t("تنبيهك عند تغير مفاتيح الأمان المهمة"),securityNotifications){
                     securityNotifications=it
                     prefs.edit().putBoolean("security_notifications_enabled",it).apply()
@@ -93,13 +98,16 @@ fun AccountScreen(
             }
             items(devices,key={it.id}){d->
                 ListItem(
-                    headlineContent={Text(d.name)},
+                    headlineContent={Text(d.name + if(d.current) " • ${t("هذا الجهاز")}" else "")},
                     supportingContent={Text(d.lastSeen.ifBlank{t("نشط")})},
-                    leadingContent={Icon(Icons.Rounded.PhoneAndroid,null,modifier=Modifier.size(ACCOUNT_ICON_DP.dp))},
-                    trailingContent={IconButton(onClick={scope.launch{runCatching{api.revokeDevice(d.id)}.onSuccess{refreshDevices()}.onFailure{safeError()}}}){Icon(Icons.Rounded.LinkOff,t("إلغاء ربط الجهاز"))}}
+                    leadingContent={Icon(if(d.current) Icons.Rounded.PhoneAndroid else Icons.Rounded.Devices,null,modifier=Modifier.size(ACCOUNT_ICON_DP.dp))},
+                    trailingContent={if(!d.current)IconButton(onClick={pendingRevoke=d}){Icon(Icons.Rounded.LinkOff,t("تسجيل خروج الجهاز"))}}
                 )
             }
             item{
+                if(devices.count{!it.current}>0) AccountRow(Icons.Rounded.Logout,t("تسجيل خروج الأجهزة الأخرى"),t("يبقي هذا الجهاز مسجلاً ويغلق بقية الجلسات")){
+                    scope.launch{runCatching{api.logoutOtherDevices()}.onSuccess{refreshDevices()}.onFailure{safeError()}}
+                }
                 AccountRow(Icons.Rounded.Download,t("تصدير بياناتي"),t("حفظ نسخة من بيانات الحساب")){
                     scope.launch{runCatching{api.exportAccount().toString(2)}.onSuccess{exporting=it;createExport.launch("zoolchat-export.json")}.onFailure{safeError()}}
                 }
@@ -116,9 +124,24 @@ fun AccountScreen(
         text={Text(when(infoDialog){
             "multi"->t("تعدد الحسابات يحتاج تخزين جلسات منفصلة والتبديل بينها بأمان. لن يظهر كخيار فعّال قبل اكتمال هذا المسار حتى لا نفقد جلستك الحالية.")
             "passkey"->t("مفاتيح المرور تحتاج ربط Android Credential Manager بخادم WebAuthn. الخيار ظاهر ضمن خطة الحساب لكنه لن يدّعي أنه مفعّل قبل اكتمال التحقق الحقيقي.")
-            else->t("التحقق بخطوتين يحتاج تحدياً حقيقياً أثناء تسجيل الدخول واسترداداً آمناً. لن نفعّل مفتاحاً شكلياً لا يحمي الحساب فعلياً.")
+            else->t("هذه الميزة متاحة من إعداد التحقق بخطوتين.")
         })},
         confirmButton={TextButton(onClick={infoDialog=null}){Text(t("حسناً"))}},
+    )
+
+    if(pendingRevoke!=null) AlertDialog(
+        onDismissRequest={pendingRevoke=null},
+        title={Text(t("تسجيل خروج هذا الجهاز؟"))},
+        text={Text(t("سيتم إنهاء جلسة ZoolChat على الجهاز المحدد، ويمكن تسجيل الدخول عليه مرة أخرى لاحقاً."))},
+        confirmButton={TextButton(onClick={val d=pendingRevoke;pendingRevoke=null;if(d!=null)scope.launch{runCatching{api.revokeDevice(d.id)}.onSuccess{refreshDevices()}.onFailure{safeError()}}}){Text(t("تسجيل خروج"))}},
+        dismissButton={TextButton(onClick={pendingRevoke=null}){Text(t("إلغاء"))}},
+    )
+
+    if(showTwoFactor) TwoFactorDialog(
+        api=api, enabled=twoFactorEnabled, available=twoFactorAvailable,
+        onDismiss={showTwoFactor=false},
+        onChanged={twoFactorEnabled=it;showTwoFactor=false;refreshTwoFactor()},
+        onError={safeError(it)},
     )
 
     if(showPassword) PasswordChangeDialog(
@@ -173,6 +196,43 @@ fun AccountScreen(
         text={Text(t("سيُحذف الحساب والرسائل والبيانات المرتبطة به نهائياً. لا يمكن التراجع عن هذه العملية."))},
         confirmButton={TextButton(onClick={showDelete=false;onDeleteAccount()},colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.error)){Text(t("حذف نهائي"))}},
         dismissButton={TextButton(onClick={showDelete=false}){Text(t("إلغاء"))}},
+    )
+}
+
+@Composable
+private fun TwoFactorDialog(api:ApiClient,enabled:Boolean,available:Boolean,onDismiss:()->Unit,onChanged:(Boolean)->Unit,onError:(String?)->Unit){
+    val scope=rememberCoroutineScope()
+    var password by remember{mutableStateOf("")};var code by remember{mutableStateOf("")};var challenge by remember{mutableStateOf<String?>(null)};var busy by remember{mutableStateOf(false)}
+    AlertDialog(
+        onDismissRequest={if(!busy)onDismiss()},
+        title={Text(if(enabled)t("إيقاف التحقق بخطوتين") else t("تفعيل التحقق بخطوتين"))},
+        text={Column{
+            if(!available) Text(t("يجب توثيق البريد الإلكتروني أولاً، كما يجب أن تكون خدمة البريد متاحة."),color=MaterialTheme.colorScheme.error)
+            else if(challenge==null){
+                Text(t("بعد التفعيل ستحتاج كلمة المرور ثم رمزاً لمرة واحدة يصل إلى بريدك الموثّق عند كل تسجيل دخول جديد."))
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(password,{password=it},label={Text(t("كلمة المرور الحالية"))},visualTransformation=PasswordVisualTransformation(),singleLine=true,enabled=!busy)
+            }else{
+                Text(t("أدخل الرمز المكوّن من 8 أرقام المرسل إلى بريدك الموثّق."))
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(code,{code=it.filter(Char::isDigit).take(8)},label={Text(t("رمز التحقق"))},singleLine=true,enabled=!busy)
+            }
+        }},
+        confirmButton={Button(enabled=available&&!busy&&(if(challenge==null)password.length>=8 else code.length==8),onClick={
+            busy=true
+            scope.launch{
+                if(challenge==null){
+                    runCatching{if(enabled)api.requestTwoFactorDisable(password) else api.requestTwoFactorEnable(password)}
+                        .onSuccess{challenge=it.getString("challengeToken");busy=false}
+                        .onFailure{busy=false;onError(t("تعذر إرسال رمز التحقق. تحقق من كلمة المرور والبريد الموثّق."))}
+                }else{
+                    runCatching{if(enabled)api.confirmTwoFactorDisable(challenge!!,code) else api.confirmTwoFactorEnable(challenge!!,code)}
+                        .onSuccess{busy=false;onChanged(!enabled)}
+                        .onFailure{busy=false;onError(t("رمز التحقق غير صحيح أو انتهت صلاحيته."))}
+                }
+            }
+        }){Text(if(challenge==null)t("إرسال الرمز") else t("تأكيد"))}},
+        dismissButton={TextButton(enabled=!busy,onClick=onDismiss){Text(t("إلغاء"))}},
     )
 }
 

@@ -18,6 +18,7 @@ import { createSession, hashPassword, revokeRefreshToken, rotateRefreshToken, ve
 import { deleteFirebaseUser, sendData, verifyFirebaseToken } from './firebase.js';
 import { installMeetingInvitations } from './meetingInvitations.js';
 import { emailDeliveryConfigured, installEmailRecovery } from './emailRecovery.js';
+import { beginLoginTwoFactorIfEnabled, installTwoFactor } from './twoFactor.js';
 import { installAdmin } from './admin.js';
 
 const app = express();
@@ -81,6 +82,7 @@ const upload = multer({
 
 const sockets = new Map<string, Set<WebSocket>>();
 installEmailRecovery(app, id => { for(const socket of sockets.get(id) ?? []) socket.close(4001, 'session_revoked'); sockets.delete(id); });
+installTwoFactor(app);
 function emitTo(userId: string, event: unknown) {
   for (const socket of sockets.get(userId) ?? []) if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
 }
@@ -238,6 +240,13 @@ app.post('/api/auth/login', authRateLimit, async (req,res)=>{
   const r=await pool.query(`SELECT u.*,uc.password_hash FROM users u JOIN user_credentials uc ON uc.user_id=u.id WHERE lower(u.username)=lower($1) OR lower(u.email)=lower($1) OR u.phone_e164=$1 LIMIT 1`,[identifier]);
   if(!r.rowCount || !(await verifyPassword(b.password,r.rows[0].password_hash))) return res.status(401).json({error:'invalid_credentials'});
   if(r.rows[0].account_status==='suspended') return res.status(403).json({error:'account_suspended'});
+  try {
+    const secondFactor=await beginLoginTwoFactorIfEnabled(r.rows[0].id,b.deviceName);
+    if(secondFactor) return res.status(202).json(secondFactor);
+  } catch(e:any) {
+    if(e?.message==='two_factor_rate_limited') return res.status(429).json({error:'two_factor_rate_limited'});
+    return res.status(503).json({error:'email_delivery_unavailable'});
+  }
   const session=await createSession(r.rows[0].id,b.deviceName);
   res.json({user:userJson(r.rows[0]),...session});
 });
@@ -326,21 +335,33 @@ app.put('/api/me', requireAuth, async (req, res) => {
 });
 app.post('/api/devices/fcm', requireAuth, async (req, res) => {
   const b = z.object({ token: z.string().min(10).max(4096), platform: z.literal('android'), deviceName: z.string().trim().max(100).optional() }).parse(req.body);
-  await pool.query(`INSERT INTO devices(user_id,fcm_token,platform,device_name,last_seen_at,revoked_at) VALUES($1,$2,$3,$4,now(),NULL)
-    ON CONFLICT(fcm_token) DO UPDATE SET user_id=EXCLUDED.user_id,device_name=EXCLUDED.device_name,last_seen_at=now(),revoked_at=NULL,updated_at=now()`, [req.zoolUser!.id, b.token, b.platform, b.deviceName ?? null]);
+  await pool.query(`INSERT INTO devices(user_id,fcm_token,platform,device_name,auth_session_id,last_seen_at,revoked_at) VALUES($1,$2,$3,$4,$5,now(),NULL)
+    ON CONFLICT(fcm_token) DO UPDATE SET user_id=EXCLUDED.user_id,device_name=EXCLUDED.device_name,auth_session_id=EXCLUDED.auth_session_id,last_seen_at=now(),revoked_at=NULL,updated_at=now()`, [req.zoolUser!.id, b.token, b.platform, b.deviceName ?? null, req.zoolUser!.sessionId ?? null]);
   res.json({ ok: true });
 });
 app.get('/api/devices', requireAuth, async (req, res) => {
   const sessions = await pool.query(`SELECT id,'android'::text platform,device_name,created_at,last_seen_at FROM auth_sessions WHERE user_id=$1 AND revoked_at IS NULL AND refresh_expires_at>now() ORDER BY last_seen_at DESC`, [req.zoolUser!.id]);
-  const pushDevices = await pool.query(`SELECT id,platform,device_name,created_at,last_seen_at FROM devices WHERE user_id=$1 AND revoked_at IS NULL ORDER BY last_seen_at DESC`, [req.zoolUser!.id]);
-  const seen=new Set<string>();
-  const rows=[...sessions.rows,...pushDevices.rows].filter(x=>{const key=`${x.device_name??''}|${x.platform??''}`;if(seen.has(key))return false;seen.add(key);return true;});
-  res.json({ devices: rows.map(x => ({ id:x.id, platform:x.platform, deviceName:x.device_name, createdAt:new Date(x.created_at).toISOString(), lastSeenAt:new Date(x.last_seen_at).toISOString() })) });
+  const currentId=req.zoolUser!.sessionId ?? null;
+  res.json({ devices: sessions.rows.map(x => ({
+    id:String(x.id), platform:x.platform, deviceName:x.device_name ?? 'Android',
+    createdAt:new Date(x.created_at).toISOString(), lastSeenAt:new Date(x.last_seen_at).toISOString(),
+    current:Boolean(currentId && String(x.id)===String(currentId)),
+  })) });
 });
 app.delete('/api/devices/:id', requireAuth, async (req, res) => {
+  const owned=await pool.query(`SELECT id,device_name FROM auth_sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL`, [req.params.id, req.zoolUser!.id]);
+  if(!owned.rowCount)return res.status(404).json({error:'device_not_found'});
+  const current=Boolean(req.zoolUser!.sessionId && String(req.params.id)===String(req.zoolUser!.sessionId));
   await pool.query(`UPDATE auth_sessions SET revoked_at=now() WHERE id=$1 AND user_id=$2`, [req.params.id, req.zoolUser!.id]);
-  await pool.query(`UPDATE devices SET revoked_at=now() WHERE id=$1 AND user_id=$2`, [req.params.id, req.zoolUser!.id]);
-  res.json({ ok: true });
+  await pool.query(`UPDATE devices SET revoked_at=now(),updated_at=now() WHERE user_id=$1 AND auth_session_id=$2`, [req.zoolUser!.id, req.params.id]);
+  res.json({ ok: true, current });
+});
+app.post('/api/devices/logout-others', requireAuth, async (req,res)=>{
+  const current=req.zoolUser!.sessionId;
+  if(!current)return res.status(409).json({error:'session_management_unavailable'});
+  const r=await pool.query(`UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL RETURNING id`,[req.zoolUser!.id,current]);
+  await pool.query(`UPDATE devices SET revoked_at=now(),updated_at=now() WHERE user_id=$1 AND auth_session_id IS NOT NULL AND auth_session_id<>$2 AND revoked_at IS NULL`,[req.zoolUser!.id,current]);
+  res.json({ok:true,revoked:r.rowCount,currentSessionId:current});
 });
 app.post('/api/contacts/discover', discoveryRateLimit, requireAuth, async (req, res) => {
   const b = z.object({ phoneHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(10000) }).parse(req.body);

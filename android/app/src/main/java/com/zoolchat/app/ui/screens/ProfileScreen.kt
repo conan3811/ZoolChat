@@ -87,7 +87,11 @@ fun ProfileScreen(
                     Text(profileName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(t("متاح") + (accountUsername?.takeIf { it.isNotBlank() }?.let { " • @$it" } ?: ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Icon(Icons.Rounded.QrCode2, contentDescription = "رمز QR", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                if(!accountUsername.isNullOrBlank()) IconButton(onClick={
+                    val link="zoolchat://profile/${Uri.encode(accountUsername)}"
+                    val send=Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,link)
+                    context.startActivity(Intent.createChooser(send,t("مشاركة رابط الملف الشخصي")))
+                }) { Icon(Icons.Rounded.Share, contentDescription=t("مشاركة رابط الملف الشخصي"), modifier=Modifier.size(22.dp), tint=MaterialTheme.colorScheme.primary) }
             }
         }
 

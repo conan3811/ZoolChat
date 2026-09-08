@@ -101,6 +101,16 @@ class ApiClient(
 
     suspend fun devices(): JSONArray = get("/api/devices").optJSONArray("devices") ?: JSONArray()
     suspend fun revokeDevice(deviceId: String) = delete("/api/devices/$deviceId")
+    suspend fun logoutOtherDevices(): JSONObject = post("/api/devices/logout-others")
+    suspend fun twoFactorStatus(): JSONObject = get("/api/me/2fa")
+    suspend fun requestTwoFactorEnable(password: String): JSONObject = post("/api/me/2fa/enable/request", JSONObject().put("password", password))
+    suspend fun confirmTwoFactorEnable(challengeToken: String, code: String): JSONObject = post("/api/me/2fa/enable/confirm", JSONObject().put("challengeToken", challengeToken).put("code", code))
+    suspend fun requestTwoFactorDisable(password: String): JSONObject = post("/api/me/2fa/disable/request", JSONObject().put("password", password))
+    suspend fun confirmTwoFactorDisable(challengeToken: String, code: String): JSONObject = post("/api/me/2fa/disable/confirm", JSONObject().put("challengeToken", challengeToken).put("code", code))
+    suspend fun resolveUsernameProfile(username: String): JSONObject {
+        val encoded = URLEncoder.encode(username.trim().removePrefix("@"), StandardCharsets.UTF_8.toString())
+        return get("/api/users/by-username/$encoded").getJSONObject("user")
+    }
 
     suspend fun discoverContacts(phoneHashes: List<String>): JSONArray {
         val result = post("/api/contacts/discover", JSONObject().put("phoneHashes", JSONArray(phoneHashes)))

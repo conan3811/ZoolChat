@@ -91,6 +91,22 @@ export function installProfileV032(app:Express){
   }))});
  });
 
+
+ app.get('/api/users/by-username/:username',requireAuth,async(req,res)=>{
+  const username=z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).safeParse(req.params.username);
+  if(!username.success)return res.status(400).json({error:'invalid_request'});
+  const viewer=req.zoolUser!.id;
+  const r=await pool.query(`SELECT u.id,u.display_name,u.username,u.profile_photo_media_id,COALESCE(p.profile_photo_visibility,'contacts') profile_photo_visibility
+    FROM users u LEFT JOIN user_privacy_settings p ON p.user_id=u.id
+    WHERE lower(u.username)=lower($1) AND u.account_status='active' LIMIT 1`,[username.data]);
+  if(!r.rowCount)return res.status(404).json({error:'user_not_found'});
+  const u=r.rows[0];
+  const blocked=await pool.query('SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)',[viewer,u.id]);
+  if(blocked.rowCount)return res.status(404).json({error:'user_not_found'});
+  const showPhoto=await canSee(viewer,u.id,u.profile_photo_visibility);
+  res.json({user:{userId:u.id,displayName:u.display_name,username:u.username,photoUrl:showPhoto&&u.profile_photo_media_id?`/api/media/${u.profile_photo_media_id}`:null}});
+ });
+
  app.put('/api/me',requireAuth,async(req,res)=>{
   const b=z.object({
    displayName:z.string().trim().min(1).max(80).optional(),
@@ -144,7 +160,7 @@ export function installProfileV032(app:Express){
   const viewer=req.zoolUser!.id,target=z.string().uuid().parse(req.params.id);
   const shared=await sharedRelation(viewer,target);
   const blocked=await pool.query('SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)',[viewer,target]);
-  if((viewer!==target&&!shared)||blocked.rowCount)return res.status(404).json({error:'profile_unavailable'});
+  if(blocked.rowCount)return res.status(404).json({error:'profile_unavailable'});
   const r=await pool.query(`SELECT u.id,u.display_name,u.username,u.about,u.profile_photo_media_id,u.online,u.last_seen_at,
    COALESCE(p.show_online,true) show_online,COALESCE(p.show_last_seen,true) show_last_seen,
    COALESCE(p.profile_photo_visibility,'contacts') profile_photo_visibility,COALESCE(p.about_visibility,'contacts') about_visibility

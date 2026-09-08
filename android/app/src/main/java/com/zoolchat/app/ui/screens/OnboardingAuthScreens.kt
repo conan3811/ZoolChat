@@ -172,6 +172,8 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
     var confirm by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var codeSent by remember { mutableStateOf(false) }
+    var twoFactorChallenge by remember { mutableStateOf<String?>(null) }
+    var twoFactorCode by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -186,11 +188,17 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
         confirm = ""
         code = ""
         codeSent = false
+        twoFactorChallenge = null
+        twoFactorCode = ""
+        com.zoolchat.app.auth.RecentAuthSecret.clear()
         error = null
         feedback = null
     }
 
-    BackHandler(enabled = mode != "login" && !loading) { changeMode("login") }
+    BackHandler(enabled = (mode != "login" || twoFactorChallenge != null) && !loading) {
+        if (twoFactorChallenge != null) { twoFactorChallenge = null; twoFactorCode = ""; com.zoolchat.app.auth.RecentAuthSecret.clear() }
+        else changeMode("login")
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -304,6 +312,15 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
             }
         }
 
+        if (twoFactorChallenge != null) {
+            Text(authLabel("أرسلنا رمز التحقق إلى بريدك الإلكتروني الموثّق.", "We sent a verification code to your verified email."), color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = twoFactorCode, onValueChange = { twoFactorCode = it.filter(Char::isDigit).take(8) },
+                label = { Text(authLabel("رمز التحقق بخطوتين", "Two-step verification code")) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !loading,
+            )
+        }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
         feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp)) }
         Spacer(Modifier.height(16.dp))
@@ -348,9 +365,17 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
                                 )
                             }
                             else -> {
-                                passwordLengthError(password)?.let { throw IllegalArgumentException(it) }
-                                auth.loginFree(nationalNumberToE164(country.region, phone), password).getOrThrow()
-                                onSignedIn()
+                                if (twoFactorChallenge != null) {
+                                    auth.completeTwoFactorLogin(twoFactorChallenge!!, twoFactorCode).getOrThrow()
+                                    onSignedIn()
+                                } else {
+                                    passwordLengthError(password)?.let { throw IllegalArgumentException(it) }
+                                    val challenge = auth.loginFree(nationalNumberToE164(country.region, phone), password).getOrThrow()
+                                    if (challenge != null) {
+                                        twoFactorChallenge = challenge
+                                        twoFactorCode = ""
+                                    } else onSignedIn()
+                                }
                             }
                         }
                     } catch (e: Exception) {

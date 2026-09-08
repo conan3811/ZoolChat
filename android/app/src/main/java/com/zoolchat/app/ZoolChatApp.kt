@@ -38,6 +38,8 @@ fun ZoolChatApp(
     onIncomingCallConsumed: () -> Unit = {},
     openChatId: String? = null,
     onOpenChatConsumed: () -> Unit = {},
+    openProfileUsername: String? = null,
+    onOpenProfileConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("zoolchat_preferences", Context.MODE_PRIVATE) }
@@ -132,6 +134,8 @@ fun ZoolChatApp(
             onIncomingCallConsumed = onIncomingCallConsumed,
             openChatId = openChatId,
             onOpenChatConsumed = onOpenChatConsumed,
+            openProfileUsername = openProfileUsername,
+            onOpenProfileConsumed = onOpenProfileConsumed,
             onSignedOut = {
                 authenticated = vm.isAuthenticated
                 profileSetupPending = vm.session.initialProfileSetupPending
@@ -151,6 +155,8 @@ private fun ProductionNav(
     onIncomingCallConsumed:()->Unit,
     openChatId:String?,
     onOpenChatConsumed:()->Unit,
+    openProfileUsername:String?,
+    onOpenProfileConsumed:()->Unit,
     onSignedOut:()->Unit,
 ){
     val permissionLauncher=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { vm.session.notificationsExplained=true }
@@ -173,6 +179,13 @@ private fun ProductionNav(
     LaunchedEffect(incomingCall){if(incomingCall!=null){nav.navigate("livecall/incoming/${incomingCall.callId}/${incomingCall.video}/${incomingCall.autoAccept}");onIncomingCallConsumed()}}
     LaunchedEffect(realtimeIncoming){if(realtimeIncoming!=null){nav.navigate("livecall/incoming/${realtimeIncoming!!.first}/${realtimeIncoming!!.second}/false");vm.consumeIncomingRealtimeCall()}}
     LaunchedEffect(openChatId){if(!openChatId.isNullOrBlank()){nav.navigate(if(openChatId=="__meet__") "meet" else "prodchat/$openChatId");onOpenChatConsumed()}}
+    LaunchedEffect(openProfileUsername){
+        if(!openProfileUsername.isNullOrBlank()){
+            val resolved=runCatching{vm.api.resolveUsernameProfile(openProfileUsername)}.getOrNull()
+            if(resolved!=null){val id=resolved.optString("userId");if(id.isNotBlank())nav.navigate(if(id==me?.id)"profile" else "user/$id")}
+            onOpenProfileConsumed()
+        }
+    }
 
     memberId?.let { id ->
         GroupMemberSheet(

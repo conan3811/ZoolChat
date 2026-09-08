@@ -127,6 +127,9 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
             "invalid_request" -> "تحقق من البيانات المدخلة"
             "invalid_or_expired_refresh_token" -> "انتهت الجلسة. سجّل الدخول مرة أخرى"
             "invalid_recovery_code" -> "اسم المستخدم أو رمز الاسترداد غير صحيح"
+            "invalid_two_factor_code" -> "رمز التحقق غير صحيح أو انتهت صلاحيته"
+            "verified_email_required" -> "يجب توثيق البريد الإلكتروني أولاً لاستخدام التحقق بخطوتين"
+            "two_factor_rate_limited" -> "انتظر قليلاً قبل طلب رمز تحقق جديد"
             else -> if (status >= 500) "خدمة ZoolChat غير متاحة حالياً. حاول لاحقاً." else "تعذر إكمال الطلب. حاول مرة أخرى."
         }
     }
@@ -175,13 +178,24 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
         response.getString("recoveryCode")
     }
 
-    suspend fun loginFree(identifier: String, password: String): Result<Unit> = runCatching {
+    suspend fun loginFree(identifier: String, password: String): Result<String?> = runCatching {
         val id = normalizePhone(identifier)
         require(id.length >= 3) { "أدخل رقم الجوال" }
         require(password.length >= 8) { "كلمة المرور غير صحيحة" }
         val o = authPost("/api/auth/login", JSONObject().put("identifier", id).put("password", password).put("deviceName", deviceName()))
+        if (o.optBoolean("twoFactorRequired", false)) {
+            RecentAuthSecret.put(password)
+            return@runCatching o.getString("challengeToken")
+        }
         saveSession(o)
         RecentAuthSecret.put(password)
+        null
+    }
+
+    suspend fun completeTwoFactorLogin(challengeToken: String, code: String): Result<Unit> = runCatching {
+        require(Regex("^\d{8}$").matches(code)) { "رمز التحقق يجب أن يتكون من 8 أرقام" }
+        val o = authPost("/api/auth/login/2fa", JSONObject().put("challengeToken", challengeToken).put("code", code).put("deviceName", deviceName()))
+        saveSession(o)
     }
 
     suspend fun testBackend(): Result<String> = runCatching { withContext(Dispatchers.IO) {
