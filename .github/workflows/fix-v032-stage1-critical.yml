@@ -17,6 +17,8 @@ jobs:
           fetch-depth: 0
       - name: Repair calls and direct-message navigation
         run: python3 scripts/fix_stage1_critical_v032.py
+      - name: Keep validation workflow for a separately authorized update
+        run: git checkout -- .github/workflows/validate-v032.yml
       - name: Commit repaired source and regression coverage
         shell: bash
         run: |
@@ -27,8 +29,7 @@ jobs:
             server/src/index.ts \
             server/tests/stage1-direct-chat.mjs \
             android/app/src/main/java/com/zoolchat/app/state/ZoolAppViewModel.kt \
-            android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionCallScreen.kt \
-            .github/workflows/validate-v032.yml
+            android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionCallScreen.kt
           git diff --cached --check
           git commit -m 'fix v0.32 stage-one calls and direct chat opening'
           git push origin HEAD:zoolchat-v0.32-development
