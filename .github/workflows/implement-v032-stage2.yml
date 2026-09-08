@@ -4,6 +4,7 @@ on:
     branches: [zoolchat-v0.32-development]
     paths:
       - 'scripts/implement_stage2_v032.py'
+      - 'scripts/stage2_trigger.txt'
 permissions:
   contents: write
 jobs:
