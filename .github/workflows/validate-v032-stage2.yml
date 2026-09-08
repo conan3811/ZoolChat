@@ -1,0 +1,88 @@
+name: Validate ZoolChat v0.32 stage two
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - '.github/workflows/validate-v032-stage2.yml'
+      - 'server/**'
+      - 'android/**'
+permissions:
+  contents: read
+concurrency:
+  group: zoolchat-v032-stage2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend-stage2:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zoolchat_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_only_password
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.30.6
+        ports:
+          - 1025:1025
+          - 8025:8025
+    env:
+      DATABASE_URL: postgresql://postgres:ci_only_password@localhost:5432/zoolchat_test
+      FIREBASE_AUTH_ENABLED: 'false'
+      MAIL_HOST: 127.0.0.1
+      MAIL_PORT: '1025'
+      MAIL_FROM: ZoolChat Stage2 Validation <noreply@example.invalid>
+      MAIL_REQUIRE_TLS: 'false'
+      EMAIL_RATE_LIMIT_PER_15_MINUTES: '100'
+      TWO_FACTOR_RATE_LIMIT_PER_15_MINUTES: '100'
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: ci-test-key
+      LIVEKIT_API_SECRET: ci-test-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: python3 scripts/privacy_scan.py
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm run build
+        working-directory: server
+      - name: Migrate and test stage two
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          node dist/migrate.js
+          node dist/index.js > /tmp/zoolchat-stage2.log 2>&1 &
+          trap 'cat /tmp/zoolchat-stage2.log || true' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8080/health >/dev/null
+          node tests/stage2-account-security.mjs
+          node tests/auth-flow.mjs
+          node tests/call-lifecycle.mjs
+  android-stage2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Compile and lint stage two Android
+        working-directory: android
+        run: gradle :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
