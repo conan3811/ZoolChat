@@ -58,4 +58,4 @@ jobs:
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
 
-# Triggered after secure E2EE identity recovery fix for messages and calls.
+# Triggered after call startup and searchable-user-profile repair.
