@@ -1,0 +1,168 @@
+name: Fix ZoolChat v0.32 profile identity
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - '.github/workflows/fix-v032-profile-identity.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+          fetch-depth: 0
+      - name: Repair profile setup and authoritative identity sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # 1) Backend: profile save must never turn a username uniqueness conflict into HTTP 500.
+          p=Path('server/src/index.ts')
+          s=p.read_text()
+          s=s.replace('username ?? "ZoolChat"]);','username ?? "ZoolChat User"]);',1)
+          start=s.index("app.put('/api/me', requireAuth, async (req, res) => {")
+          end=s.index("app.post('/api/devices/fcm'",start)
+          block='''app.put('/api/me', requireAuth, async (req, res) => {
+  const parsed = z.object({
+    displayName: z.string().trim().min(1).max(80).optional(),
+    username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).nullable().optional(),
+    about: z.string().max(160).optional(),
+    photoUrl: z.string().url().nullable().optional(),
+    photoMediaId: z.string().uuid().nullable().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_request' });
+  const b = parsed.data;
+  const uid = req.zoolUser!.id;
+  if (b.photoMediaId) {
+    const owned = await pool.query(`SELECT 1 FROM media_assets WHERE id=$1 AND owner_id=$2 AND mime_type LIKE 'image/%'`, [b.photoMediaId, uid]);
+    if (!owned.rowCount) return res.status(400).json({ error: 'invalid_profile_photo' });
+  }
+  try {
+    let r = await pool.query(`UPDATE users SET
+      display_name=COALESCE($2,display_name),
+      username=CASE WHEN $3::boolean THEN $4::text ELSE username END,
+      about=COALESCE($5,about),
+      photo_url=CASE WHEN $6::boolean THEN $7::text ELSE photo_url END,
+      updated_at=now()
+      WHERE id=$1 RETURNING *`, [
+        uid,
+        b.displayName ?? null,
+        b.username !== undefined,
+        b.username === undefined ? null : (b.username?.toLowerCase() ?? null),
+        b.about ?? null,
+        b.photoUrl !== undefined,
+        b.photoUrl ?? null,
+      ]);
+    if (b.photoMediaId !== undefined) {
+      r = await pool.query(`UPDATE users SET profile_photo_media_id=$2,photo_url=NULL,updated_at=now() WHERE id=$1 RETURNING *`, [uid, b.photoMediaId]);
+    }
+    res.json({ user: userJson(r.rows[0]) });
+  } catch (e: any) {
+    if (e?.code === '23505') return res.status(409).json({ error: 'username_taken' });
+    throw e;
+  }
+});
+'''
+          s=s[:start]+block+s[end:]
+          p.write_text(s)
+
+          # 2) Android: bootstrap reads the server identity instead of overwriting it with stale local values.
+          p=Path('android/app/src/main/java/com/zoolchat/app/state/ZoolAppViewModel.kt')
+          s=p.read_text()
+          start=s.index('    fun bootstrap(')
+          end=s.index('    private fun startRealtime()',start)
+          block='''    fun bootstrap() {
+        viewModelScope.launch {
+            runCatching {
+                var user = api.get("/api/me").getJSONObject("user")
+                var username = user.optString("username").takeIf {
+                    it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_")
+                }
+                var displayName = user.optString("displayName").takeIf { it.isNotBlank() && it != "null" }.orEmpty()
+
+                // Repair accounts created by older registration flows that left the literal
+                // placeholder as the display name even though a real username already exists.
+                if (username != null && displayName in setOf("ZoolChat", "ZoolChat User")) {
+                    user = api.updateProfile(displayName = username)
+                    displayName = user.optString("displayName", username).ifBlank { username }
+                    username = user.optString("username").takeIf {
+                        it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_")
+                    } ?: username
+                }
+
+                _currentUser.value = CurrentUser(
+                    user.getString("id"), displayName.ifBlank { username ?: "ZoolChat User" },
+                    username,
+                    user.optString("phoneE164").takeIf { it.isNotBlank() && it != "null" },
+                    user.optString("photoUrl").takeIf { it.isNotBlank() && it != "null" },
+                )
+                session.localDisplayName = displayName.ifBlank { username ?: "ZoolChat User" }
+                session.accountUsername = username.orEmpty()
+                session.currentUserId = user.getString("id")
+                runCatching { e2ee.registerLocalKey() }.onFailure { _error.value = "تعذر تسجيل مفتاح التشفير: ${it.message}" }
+                startRealtime()
+                sync.refreshChats()
+                refreshCallHistoryInternal()
+                MessageSyncRepository.scheduleSend(getApplication())
+                registerFcmIfAvailable()
+            }.onFailure { _error.value = it.message }
+        }
+    }
+
+'''
+          s=s[:start]+block+s[end:]
+          # Keep cached username synchronized whenever an explicit profile update path is used.
+          needle='''                session.localDisplayName = user.getString("displayName")
+                session.currentUserId = user.getString("id")
+            }.onFailure { _error.value = it.message }
+'''
+          repl='''                session.localDisplayName = user.getString("displayName")
+                session.accountUsername = user.optString("username").takeIf { it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_") }.orEmpty()
+                session.currentUserId = user.getString("id")
+            }.onFailure { _error.value = it.message }
+'''
+          if needle not in s:
+              raise SystemExit('profile display-name sync block changed')
+          s=s.replace(needle,repl,1)
+          p.write_text(s)
+
+          # 3) Initial setup: verify that the server really persisted both values and show precise conflicts.
+          p=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/InitialProfileSetupScreen.kt')
+          s=p.read_text()
+          old='''                        val result=api.put("/api/me",JSONObject().put("displayName",name).put("username",user)).getJSONObject("user")
+                        session.localDisplayName=result.optString("displayName",name)
+                        session.accountUsername=result.optString("username",user).takeUnless{it=="null"}.orEmpty().lowercase()
+                        usernameState=setupLabel("اسم المستخدم متاح","Username is available")
+                        stage=1
+'''
+          new='''                        val result=api.put("/api/me",JSONObject().put("displayName",name).put("username",user)).getJSONObject("user")
+                        val savedName=result.optString("displayName").takeUnless{it=="null"}.orEmpty()
+                        val savedUsername=result.optString("username").takeUnless{it=="null"}.orEmpty().lowercase()
+                        if(savedName!=name || !savedUsername.equals(user,ignoreCase=true)) {
+                            throw IllegalStateException("profile_identity_not_persisted")
+                        }
+                        session.localDisplayName=savedName
+                        session.accountUsername=savedUsername
+                        usernameState=setupLabel("تم حفظ اسم المستخدم","Username saved")
+                        stage=1
+'''
+          if old not in s:
+              raise SystemExit('initial profile save block changed')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Commit profile identity fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/src/index.ts android/app/src/main/java/com/zoolchat/app/state/ZoolAppViewModel.kt android/app/src/main/java/com/zoolchat/app/ui/screens/InitialProfileSetupScreen.kt
+          git diff --cached --check
+          git commit -m 'fix v0.32 profile setup and username identity sync'
+          git push origin HEAD:zoolchat-v0.32-development
