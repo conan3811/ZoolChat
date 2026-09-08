@@ -88,7 +88,9 @@ suspend fun registerAccountCompatible(
 ): Result<Unit> {
     val primary = auth.registerAccount(email, password, phoneE164)
     if (primary.isSuccess) {
-        session.initialProfileSetupPending = true
+        // Registration must enter Chats immediately. Profile/username setup remains optional
+        // and is available later from Settings > Profile.
+        session.initialProfileSetupPending = false
         return primary
     }
 
@@ -128,6 +130,6 @@ suspend fun registerAccountCompatible(
         }
         persistCompatibilitySession(session, responsePayload)
         RecentAuthSecret.put(password)
-        session.initialProfileSetupPending = true
+        session.initialProfileSetupPending = false
     }
 }
