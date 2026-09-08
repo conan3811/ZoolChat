@@ -98,6 +98,23 @@ fun InitialProfileSetupScreen(
         onComplete()
     }
 
+    LaunchedEffect(Unit) {
+        runCatching { api.get("/api/me").getJSONObject("user") }.onSuccess { existing ->
+            val existingUsername=existing.optString("username").takeIf {
+                it.isNotBlank() && it!="null" && !it.startsWith("zc_tmp_")
+            }
+            val existingDisplay=existing.optString("displayName").takeIf {
+                it.isNotBlank() && it!="null" && it !in setOf("ZoolChat","ZoolChat User")
+            }
+            if(existingUsername!=null) {
+                username=existingUsername
+                displayName=existingDisplay ?: existingUsername
+                session.accountUsername=existingUsername.lowercase()
+                session.localDisplayName=displayName
+            }
+        }
+    }
+
     if(stage==1){
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -198,7 +215,16 @@ fun InitialProfileSetupScreen(
                 busy=true;error=null;usernameState=setupLabel("جاري الحفظ…","Saving…")
                 scope.launch {
                     try {
-                        val result=api.put("/api/me",JSONObject().put("displayName",name).put("username",user)).getJSONObject("user")
+                        val body=JSONObject().put("displayName",name).put("username",user)
+                        val result=try {
+                            api.put("/api/me",body).getJSONObject("user")
+                        } catch(primary:ApiException) {
+                            val raw=primary.message.orEmpty()
+                            if(primary.status==409||raw.contains("username_taken",true)) throw primary
+                            // Production can temporarily be one backend revision behind Android.
+                            // The legacy session bootstrap persists the same displayName/username.
+                            api.bootstrap(name,user).getJSONObject("user")
+                        }
                         val savedName=result.optString("displayName").takeUnless{it=="null"}.orEmpty()
                         val savedUsername=result.optString("username").takeUnless{it=="null"}.orEmpty().lowercase()
                         if(savedName!=name || !savedUsername.equals(user,ignoreCase=true)) {

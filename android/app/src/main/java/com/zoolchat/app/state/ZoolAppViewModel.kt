@@ -88,11 +88,22 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
                 // If the account already has a real username (for example "finance"), use that as
                 // the initial display name instead of showing "ZoolChat" as though it were identity.
                 if (username != null && displayName in setOf("ZoolChat", "ZoolChat User")) {
-                    user = api.updateProfile(displayName = username)
-                    displayName = user.optString("displayName", username).ifBlank { username }
-                    username = user.optString("username").takeIf {
-                        it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_")
-                    } ?: username
+                    val repaired = runCatching { api.updateProfile(displayName = username) }
+                        .recoverCatching { api.bootstrap(username, username).getJSONObject("user") }
+                        .getOrNull()
+                    if (repaired != null) {
+                        user = repaired
+                        displayName = repaired.optString("displayName", username).takeIf {
+                            it.isNotBlank() && it != "null" && it !in setOf("ZoolChat", "ZoolChat User")
+                        } ?: username
+                        username = repaired.optString("username").takeIf {
+                            it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_")
+                        } ?: username
+                    } else {
+                        // The server identity still contains the real username. A failed cosmetic
+                        // display-name migration must not hide it or leave the current user null.
+                        displayName = username
+                    }
                 }
 
                 _currentUser.value = CurrentUser(
