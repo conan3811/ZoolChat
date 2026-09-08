@@ -1,0 +1,35 @@
+name: Verify ZoolChat v0.32 stage-one live backend
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - '.github/workflows/verify-v032-stage1-live.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for live backend and verify readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(tr -d '\r\n' < cloud/API_BASE_URL.txt)"
+          ok=0
+          for i in $(seq 1 24); do
+            if HEALTH="$(curl --fail --silent --max-time 15 "$API_URL/health" 2>/dev/null)" && READY="$(curl --fail --silent --max-time 15 "$API_URL/ready" 2>/dev/null)"; then
+              if HEALTH="$HEALTH" READY="$READY" node - <<'NODE'
+          const h=JSON.parse(process.env.HEALTH||'{}');
+          const r=JSON.parse(process.env.READY||'{}');
+          if(h.version!=='0.32.0-dev'||h.ok!==true||h.db!==true||h.livekitConfigured!==true||h.firebaseConfigured!==true||r.ok!==true||r.db!==true||r.livekit!==true||r.auth!==true) process.exit(1);
+          NODE
+              then
+                ok=1
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test "$ok" = 1
+          echo 'PASS: live v0.32 backend is healthy and ready after stage-one rollout'
