@@ -19,9 +19,17 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean("notifications_explained", false)
         set(value) { prefs.edit().putBoolean("notifications_explained", value).apply() }
 
+    /**
+     * v0.32 no longer blocks a successful login/registration behind a mandatory profile step.
+     * Keep the legacy preference write-compatible so upgrades are harmless, but never let an
+     * old stored value redirect an authenticated user away from Chats. Profile editing remains
+     * available from Settings.
+     */
     var initialProfileSetupPending: Boolean
-        get() = prefs.getBoolean("initial_profile_setup_pending", false)
-        set(value) { prefs.edit().putBoolean("initial_profile_setup_pending", value).apply() }
+        get() = false
+        set(@Suppress("UNUSED_PARAMETER") value) {
+            prefs.edit().remove("initial_profile_setup_pending").apply()
+        }
 
     var devUserId: String?
         get() = prefs.getString("dev_user_id", null)
