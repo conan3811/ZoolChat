@@ -1,0 +1,56 @@
+name: Validate ZoolChat v0.32 stage-one regressions
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - 'server/src/**'
+      - 'server/tests/stage1-direct-chat.mjs'
+      - 'server/tests/call-lifecycle.mjs'
+      - '.github/workflows/validate-v032-stage1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  direct-chat-and-call-lifecycle:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zoolchat_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_only_password
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci_only_password@localhost:5432/zoolchat_test
+      FIREBASE_AUTH_ENABLED: 'false'
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: ci-test-key
+      LIVEKIT_API_SECRET: ci-test-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm run build
+        working-directory: server
+      - name: Run stage-one backend regressions
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          node dist/migrate.js
+          node dist/index.js > /tmp/zoolchat-stage1.log 2>&1 &
+          trap 'cat /tmp/zoolchat-stage1.log || true' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8080/health >/dev/null
+          node tests/stage1-direct-chat.mjs
+          node tests/call-lifecycle.mjs
