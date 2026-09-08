@@ -195,17 +195,18 @@ fun InitialProfileSetupScreen(
                 val user=username.lowercase()
                 if(name.isBlank()) { error=setupLabel("أدخل الاسم الظاهر","Enter a display name");return@Button }
                 if(!usernamePattern.matches(user)) { error=setupLabel("اسم المستخدم غير صالح","Invalid username");return@Button }
-                busy=true;error=null;usernameState=setupLabel("جاري التحقق…","Checking…")
+                busy=true;error=null;usernameState=setupLabel("جاري الحفظ…","Saving…")
                 scope.launch {
                     try {
-                        if(!usernameAvailableCompatible(api,user)) {
-                            usernameState=setupLabel("اسم المستخدم مستخدم بالفعل","Username is already used")
-                            return@launch
-                        }
                         val result=api.put("/api/me",JSONObject().put("displayName",name).put("username",user)).getJSONObject("user")
-                        session.localDisplayName=result.optString("displayName",name)
-                        session.accountUsername=result.optString("username",user).takeUnless{it=="null"}.orEmpty().lowercase()
-                        usernameState=setupLabel("اسم المستخدم متاح","Username is available")
+                        val savedName=result.optString("displayName").takeUnless{it=="null"}.orEmpty()
+                        val savedUsername=result.optString("username").takeUnless{it=="null"}.orEmpty().lowercase()
+                        if(savedName!=name || !savedUsername.equals(user,ignoreCase=true)) {
+                            throw IllegalStateException("profile_identity_not_persisted")
+                        }
+                        session.localDisplayName=savedName
+                        session.accountUsername=savedUsername
+                        usernameState=setupLabel("تم حفظ اسم المستخدم","Username saved")
                         stage=1
                     } catch(e:ApiException) {
                         val raw=e.message.orEmpty()

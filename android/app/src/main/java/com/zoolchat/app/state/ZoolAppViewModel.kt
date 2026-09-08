@@ -73,18 +73,37 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { RealtimeEventBus.events.collect { handleRealtime(it) } }
     }
 
-    fun bootstrap(displayName: String = session.localDisplayName.ifBlank { session.devDisplayName.ifBlank { "ZoolChat User" } }) {
+    fun bootstrap() {
         viewModelScope.launch {
             runCatching {
-                val obj = api.bootstrap(displayName)
-                val user = obj.getJSONObject("user")
+                var user = api.get("/api/me").getJSONObject("user")
+                var username = user.optString("username").takeIf {
+                    it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_")
+                }
+                var displayName = user.optString("displayName").takeIf {
+                    it.isNotBlank() && it != "null"
+                }.orEmpty()
+
+                // Older registration builds used a product-name placeholder as the display name.
+                // If the account already has a real username (for example "finance"), use that as
+                // the initial display name instead of showing "ZoolChat" as though it were identity.
+                if (username != null && displayName in setOf("ZoolChat", "ZoolChat User")) {
+                    user = api.updateProfile(displayName = username)
+                    displayName = user.optString("displayName", username).ifBlank { username }
+                    username = user.optString("username").takeIf {
+                        it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_")
+                    } ?: username
+                }
+
                 _currentUser.value = CurrentUser(
-                    user.getString("id"), user.getString("displayName"),
-                    user.optString("username").takeIf { it.isNotBlank() && it != "null" },
-                    user.optString("phoneE164").takeIf { it.isNotBlank() },
-                    user.optString("photoUrl").takeIf { it.isNotBlank() },
+                    user.getString("id"),
+                    displayName.ifBlank { username ?: "ZoolChat User" },
+                    username,
+                    user.optString("phoneE164").takeIf { it.isNotBlank() && it != "null" },
+                    user.optString("photoUrl").takeIf { it.isNotBlank() && it != "null" },
                 )
-                session.localDisplayName = user.getString("displayName")
+                session.localDisplayName = displayName.ifBlank { username ?: "ZoolChat User" }
+                session.accountUsername = username.orEmpty()
                 session.currentUserId = user.getString("id")
                 runCatching { e2ee.registerLocalKey() }.onFailure { _error.value = "تعذر تسجيل مفتاح التشفير: ${it.message}" }
                 startRealtime()
@@ -117,6 +136,7 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
                     user.optString("photoUrl").takeIf { it.isNotBlank() },
                 )
                 session.localDisplayName = user.getString("displayName")
+                session.accountUsername = user.optString("username").takeIf { it.isNotBlank() && it != "null" && !it.startsWith("zc_tmp_") }.orEmpty()
                 session.currentUserId = user.getString("id")
             }.onFailure { _error.value = it.message }
         }

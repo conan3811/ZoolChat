@@ -210,7 +210,7 @@ app.post('/api/auth/register', authRateLimit, async (req,res)=>{
   try{
     const result=await tx(async c=>{
       const discoveryHash=sha256Hex(b.phoneE164);
-      const user=await c.query(`INSERT INTO users(username,email,phone_e164,phone_discovery_hash,display_name) VALUES($1,$2,$3,$4,$5) RETURNING *`,[username,email,b.phoneE164,discoveryHash,username ?? "ZoolChat"]);
+      const user=await c.query(`INSERT INTO users(username,email,phone_e164,phone_discovery_hash,display_name) VALUES($1,$2,$3,$4,$5) RETURNING *`,[username,email,b.phoneE164,discoveryHash,username ?? "ZoolChat User"]);
       const passwordHash=await hashPassword(b.password);
       await c.query(`INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)`,[user.rows[0].id,passwordHash]);
       const recoveryCode=newRecoveryCode();
@@ -285,16 +285,44 @@ app.post('/api/session/bootstrap', requireAuth, async (req, res) => {
 });
 app.get('/api/me', requireAuth, async (req, res) => { const r = await pool.query(`SELECT * FROM users WHERE id=$1`, [req.zoolUser!.id]); res.json({ user: userJson(r.rows[0]) }); });
 app.put('/api/me', requireAuth, async (req, res) => {
-  const b = z.object({ displayName: z.string().trim().min(1).max(80).optional(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).nullable().optional(), about: z.string().max(160).optional(), photoUrl: z.string().url().nullable().optional(), photoMediaId: z.string().uuid().nullable().optional() }).parse(req.body);
+  const parsed = z.object({
+    displayName: z.string().trim().min(1).max(80).optional(),
+    username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.]+$/).nullable().optional(),
+    about: z.string().max(160).optional(),
+    photoUrl: z.string().url().nullable().optional(),
+    photoMediaId: z.string().uuid().nullable().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_request' });
+  const b = parsed.data;
+  const uid = req.zoolUser!.id;
   if (b.photoMediaId) {
-    const owned=await pool.query(`SELECT 1 FROM media_assets WHERE id=$1 AND owner_id=$2 AND mime_type LIKE 'image/%'`,[b.photoMediaId,req.zoolUser!.id]);
-    if(!owned.rowCount)return res.status(400).json({error:'invalid_profile_photo'});
+    const owned = await pool.query(`SELECT 1 FROM media_assets WHERE id=$1 AND owner_id=$2 AND mime_type LIKE 'image/%'`, [b.photoMediaId, uid]);
+    if (!owned.rowCount) return res.status(400).json({ error: 'invalid_profile_photo' });
   }
-  let r = await pool.query(`UPDATE users SET display_name=COALESCE($2,display_name),username=COALESCE($3,username),about=COALESCE($4,about),photo_url=COALESCE($5,photo_url),updated_at=now() WHERE id=$1 RETURNING *`, [req.zoolUser!.id, b.displayName ?? null, b.username ?? null, b.about ?? null, b.photoUrl ?? null]);
-  if (b.photoMediaId !== undefined) {
-    r=await pool.query(`UPDATE users SET profile_photo_media_id=$2,photo_url=NULL,updated_at=now() WHERE id=$1 RETURNING *`,[req.zoolUser!.id,b.photoMediaId]);
+  try {
+    let r = await pool.query(`UPDATE users SET
+      display_name=COALESCE($2,display_name),
+      username=CASE WHEN $3::boolean THEN $4::text ELSE username END,
+      about=COALESCE($5,about),
+      photo_url=CASE WHEN $6::boolean THEN $7::text ELSE photo_url END,
+      updated_at=now()
+      WHERE id=$1 RETURNING *`, [
+        uid,
+        b.displayName ?? null,
+        b.username !== undefined,
+        b.username === undefined ? null : (b.username?.toLowerCase() ?? null),
+        b.about ?? null,
+        b.photoUrl !== undefined,
+        b.photoUrl ?? null,
+      ]);
+    if (b.photoMediaId !== undefined) {
+      r = await pool.query(`UPDATE users SET profile_photo_media_id=$2,photo_url=NULL,updated_at=now() WHERE id=$1 RETURNING *`, [uid, b.photoMediaId]);
+    }
+    res.json({ user: userJson(r.rows[0]) });
+  } catch (e: any) {
+    if (e?.code === '23505') return res.status(409).json({ error: 'username_taken' });
+    throw e;
   }
-  res.json({ user: userJson(r.rows[0]) });
 });
 app.post('/api/devices/fcm', requireAuth, async (req, res) => {
   const b = z.object({ token: z.string().min(10).max(4096), platform: z.literal('android'), deviceName: z.string().trim().max(100).optional() }).parse(req.body);
