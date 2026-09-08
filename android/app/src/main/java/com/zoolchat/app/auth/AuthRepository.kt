@@ -193,7 +193,7 @@ class AuthRepository(val context: Context, private val sessionStore: SessionStor
     }
 
     suspend fun completeTwoFactorLogin(challengeToken: String, code: String): Result<Unit> = runCatching {
-        require(Regex("^\d{8}$").matches(code)) { "رمز التحقق يجب أن يتكون من 8 أرقام" }
+        require(Regex("""^\d{8}$""").matches(code)) { "رمز التحقق يجب أن يتكون من 8 أرقام" }
         val o = authPost("/api/auth/login/2fa", JSONObject().put("challengeToken", challengeToken).put("code", code).put("deviceName", deviceName()))
         saveSession(o)
     }
