@@ -169,4 +169,4 @@ jobs:
             android/app/build/outputs/apk/public/debug/*.apk
             android/app/build/reports/lint-results-publicDebug.*
           if-no-files-found: error
-# validation refresh after passkey icon fix
+# validation refresh after profile and username identity repair
