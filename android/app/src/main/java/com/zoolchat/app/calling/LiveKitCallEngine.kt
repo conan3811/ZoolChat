@@ -3,6 +3,7 @@ package com.zoolchat.app.calling
 import android.content.Context
 import android.content.Intent
 import io.livekit.android.AudioOptions
+import io.livekit.android.ConnectOptions
 import io.livekit.android.LiveKitOverrides
 import io.livekit.android.audio.AudioSwitchHandler
 import io.livekit.android.room.track.RemoteAudioTrack
@@ -71,21 +72,26 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
             }
         }
         newRoom.prepareConnection(config.serverUrl, config.token)
-        newRoom.connect(config.serverUrl, config.token)
+        newRoom.connect(
+            config.serverUrl,
+            config.token,
+            ConnectOptions(audio = config.startMicrophone, video = config.startCamera),
+        )
 
-        if (config.startMicrophone) {
-            var microphonePublished = newRoom.localParticipant.setMicrophoneEnabled(true)
-            // A small number of devices report a transient false immediately after Room.connect().
-            // Retry once instead of tearing down the accepted call on that first publication race.
-            if (!microphonePublished) {
-                delay(350)
-                microphonePublished = newRoom.localParticipant.setMicrophoneEnabled(true)
-            }
-            check(microphonePublished) { "microphone_publish_failed" }
-        } else {
+        // ConnectOptions publishes the requested tracks during connection. Keep a guarded retry
+        // only for devices where the initial publication was not retained after negotiation.
+        if (config.startMicrophone && !newRoom.localParticipant.isMicrophoneEnabled) {
+            delay(300)
+            check(newRoom.localParticipant.setMicrophoneEnabled(true)) { "microphone_publish_failed" }
+        } else if (!config.startMicrophone) {
             runCatching { newRoom.localParticipant.setMicrophoneEnabled(false) }
         }
-        newRoom.localParticipant.setCameraEnabled(config.startCamera)
+        if (config.startCamera && !newRoom.localParticipant.isCameraEnabled) {
+            delay(250)
+            check(newRoom.localParticipant.setCameraEnabled(true)) { "camera_publish_failed" }
+        } else if (!config.startCamera) {
+            runCatching { newRoom.localParticipant.setCameraEnabled(false) }
+        }
         refreshLocalCameraTrack()
         _connected.value = true
         _remoteParticipantPresent.value = newRoom.remoteParticipants.isNotEmpty()

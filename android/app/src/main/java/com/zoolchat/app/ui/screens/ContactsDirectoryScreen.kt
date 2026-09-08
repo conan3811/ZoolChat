@@ -27,6 +27,7 @@ fun ContactsDirectoryScreen(
     onBack: () -> Unit,
     onChat: (RegisteredContact) -> Unit,
     onCall: (RegisteredContact) -> Unit,
+    onProfile: (RegisteredContact) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     val shown = if (query.trim().length >= 3) searchResults else contacts
@@ -53,7 +54,7 @@ fun ContactsDirectoryScreen(
         } else LazyColumn {
             items(shown, key = { it.userId }) { c ->
                 Row(
-                    Modifier.fillMaxWidth().clickable { onChat(c) }.padding(horizontal = 16.dp, vertical = 10.dp),
+                    Modifier.fillMaxWidth().clickable { onProfile(c) }.padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Avatar(c.localName, 48.dp)

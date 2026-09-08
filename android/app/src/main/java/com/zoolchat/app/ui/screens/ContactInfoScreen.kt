@@ -40,6 +40,7 @@ fun ContactInfoScreen(
     onShared:(String)->Unit,
 ) {
     val scope=rememberCoroutineScope();val context=LocalContext.current
+    val hasChat=chatId.isNotBlank()
     var profile by remember(userId) { mutableStateOf<JSONObject?>(null) }
     var error by remember(userId) { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
@@ -57,7 +58,7 @@ fun ContactInfoScreen(
         var safeName:String?=null
         var safeUsername:String?=null
         var safePhoto:String?=null
-        val group=runCatching{api.groupInfo(chatId)}.getOrNull()
+        val group=if(hasChat) runCatching{api.groupInfo(chatId)}.getOrNull() else null
         val members=group?.optJSONArray("members")
         val member=(0 until (members?.length()?:0)).mapNotNull{members?.optJSONObject(it)}.firstOrNull{it.optString("userId")==userId}
         safeName=member?.optString("displayName")?.takeIf{it.isNotBlank()}
@@ -100,34 +101,37 @@ fun ContactInfoScreen(
                 TextButton(onClick={onCall(false)}){Text(t("مكالمة صوتية"))}
                 TextButton(onClick={onCall(true)}){Text(t("مكالمة فيديو"))}
             }
-            HorizontalDivider()
-            Text(t("البحث في المحادثة"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                OutlinedTextField(query,{query=it.take(100)},label={Text(t("بحث"))},modifier=Modifier.weight(1f),singleLine=true)
-                TextButton(enabled=query.trim().length>=2,onClick={scope.launch{
-                    val local=messages.filter{!it.deleted&&!it.decryptionFailed&&it.body.contains(query,true)}
-                    val server=runCatching{api.searchMessages(chatId,query)}.getOrNull()?.let{arr->(0 until arr.length()).map{MessageSyncRepository.parseMessage(arr.getJSONObject(it))}}.orEmpty()
-                    searchResults=(local+server).distinctBy{it.id}.sortedByDescending{it.createdAt}
-                }}){Text(t("بحث"))}
-            }
-            searchResults.take(8).forEach{Text(it.body,modifier=Modifier.padding(vertical=4.dp),maxLines=2)}
-            Text(t("الإشعارات"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
-            Row {
-                listOf(0L to t("تشغيل"),8L to t("8 ساعات"),168L to t("أسبوع"),-1L to t("دائماً")).forEach { (hours,label) ->
-                    TextButton(onClick={context.getSharedPreferences("zoolchat_user_settings",0).edit().putLong("mute_until_$chatId",if(hours<0)Long.MAX_VALUE else if(hours==0L)0 else System.currentTimeMillis()+hours*3600000).apply()}) { Text(label) }
-                }
-            }
-            Text(t("الوسائط والروابط والمستندات"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
-                TextButton(onClick={onShared("media")}){Text(t("الوسائط"))}
-                TextButton(onClick={onShared("links")}){Text(t("الروابط"))}
-                TextButton(onClick={onShared("documents")}){Text(t("المستندات"))}
-            }
-            messages.filter{!it.deleted&&(it.type in listOf("image","video","document"))}.takeLast(6).forEach{Text(it.mediaName?:t("مرفق"),modifier=Modifier.padding(vertical=3.dp))}
-            val groups=p.optJSONArray("groupsInCommon")
-            if(groups!=null&&groups.length()>0){
-                Text(t("مجموعات مشتركة"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
-                for(i in 0 until groups.length())Text(groups.getJSONObject(i).optString("title"),modifier=Modifier.padding(vertical=3.dp))
+            if(hasChat) {
+                            HorizontalDivider()
+                            Text(t("البحث في المحادثة"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                OutlinedTextField(query,{query=it.take(100)},label={Text(t("بحث"))},modifier=Modifier.weight(1f),singleLine=true)
+                                TextButton(enabled=query.trim().length>=2,onClick={scope.launch{
+                                    val local=messages.filter{!it.deleted&&!it.decryptionFailed&&it.body.contains(query,true)}
+                                    val server=runCatching{api.searchMessages(chatId,query)}.getOrNull()?.let{arr->(0 until arr.length()).map{MessageSyncRepository.parseMessage(arr.getJSONObject(it))}}.orEmpty()
+                                    searchResults=(local+server).distinctBy{it.id}.sortedByDescending{it.createdAt}
+                                }}){Text(t("بحث"))}
+                            }
+                            searchResults.take(8).forEach{Text(it.body,modifier=Modifier.padding(vertical=4.dp),maxLines=2)}
+                            Text(t("الإشعارات"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            Row {
+                                listOf(0L to t("تشغيل"),8L to t("8 ساعات"),168L to t("أسبوع"),-1L to t("دائماً")).forEach { (hours,label) ->
+                                    TextButton(onClick={context.getSharedPreferences("zoolchat_user_settings",0).edit().putLong("mute_until_$chatId",if(hours<0)Long.MAX_VALUE else if(hours==0L)0 else System.currentTimeMillis()+hours*3600000).apply()}) { Text(label) }
+                                }
+                            }
+                            Text(t("الوسائط والروابط والمستندات"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
+                                TextButton(onClick={onShared("media")}){Text(t("الوسائط"))}
+                                TextButton(onClick={onShared("links")}){Text(t("الروابط"))}
+                                TextButton(onClick={onShared("documents")}){Text(t("المستندات"))}
+                            }
+                            messages.filter{!it.deleted&&(it.type in listOf("image","video","document"))}.takeLast(6).forEach{Text(it.mediaName?:t("مرفق"),modifier=Modifier.padding(vertical=3.dp))}
+                            val groups=p.optJSONArray("groupsInCommon")
+                            if(groups!=null&&groups.length()>0){
+                                Text(t("مجموعات مشتركة"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                                for(i in 0 until groups.length())Text(groups.getJSONObject(i).optString("title"),modifier=Modifier.padding(vertical=3.dp))
+                            }
+
             }
             Spacer(Modifier.height(8.dp))
             TextButton(onClick={scope.launch{runCatching{api.post("/api/users/$userId/block")}.onSuccess{onBack()}.onFailure{error=t("تعذر إكمال الطلب")}}},modifier=Modifier.fillMaxWidth()){Text(t("حظر المستخدم"),color=MaterialTheme.colorScheme.error)}
@@ -135,7 +139,7 @@ fun ContactInfoScreen(
         }
         error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
     }
-    if(report)AlertDialog(onDismissRequest={report=false},title={Text(t("الإبلاغ"))},text={OutlinedTextField(reason,{reason=it.take(500)},label={Text(t("السبب"))})},confirmButton={TextButton(enabled=reason.trim().length>=3,onClick={scope.launch{runCatching{api.post("/api/reports",JSONObject().put("userId",userId).put("chatId",chatId).put("reason",reason.trim()))}.onSuccess{report=false;reason=""}.onFailure{error=t("تعذر إكمال الطلب")}}}){Text(t("إرسال"))}},dismissButton={TextButton(onClick={report=false}){Text(t("إلغاء"))}})
+    if(report)AlertDialog(onDismissRequest={report=false},title={Text(t("الإبلاغ"))},text={OutlinedTextField(reason,{reason=it.take(500)},label={Text(t("السبب"))})},confirmButton={TextButton(enabled=reason.trim().length>=3,onClick={scope.launch{runCatching{api.post("/api/reports",JSONObject().put("userId",userId).put("reason",reason.trim()).apply{if(hasChat)put("chatId",chatId)})}.onSuccess{report=false;reason=""}.onFailure{error=t("تعذر إكمال الطلب")}}}){Text(t("إرسال"))}},dismissButton={TextButton(onClick={report=false}){Text(t("إلغاء"))}})
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

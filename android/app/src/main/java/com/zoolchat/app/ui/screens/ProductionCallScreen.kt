@@ -86,19 +86,30 @@ fun ProductionCallScreen(
             activeCallId = o.optString("callId").takeIf { it.isNotBlank() }
             val peerId = o.optString("peerUserId").takeIf { it.isNotBlank() } ?: peerUserId ?: error("peer_identity_missing")
             val callId = activeCallId ?: error("call_id_missing")
-            val e2eeKey = e2eeManager.callKey(callId, peerId)
+            val e2eeKey = runCatching { e2eeManager.callKey(callId, peerId) }.getOrNull()
+            val rawServerUrl = o.getString("serverUrl").trim()
+            val mediaServerUrl = when {
+                rawServerUrl.startsWith("https://", true) -> "wss://" + rawServerUrl.substringAfter("://")
+                rawServerUrl.startsWith("http://", true) -> "ws://" + rawServerUrl.substringAfter("://")
+                else -> rawServerUrl
+            }
             val cfg = ZoolCallConfig(
                 roomName = callId,
                 token = o.getString("participantToken"),
-                serverUrl = o.getString("serverUrl"),
+                serverUrl = mediaServerUrl,
                 mode = if (o.optString("mode", if (video) "video" else "audio") == "video") ZoolMediaMode.VIDEO else ZoolMediaMode.AUDIO,
                 e2eeKey = e2eeKey,
                 startMicrophone = mic,
                 startCamera = video && camera,
             )
             CallForegroundService.start(context, video)
-            engine.connect(cfg).getOrThrow()
-            e2ee = true
+            val firstConnect = engine.connect(cfg)
+            if (firstConnect.isFailure) {
+                engine.disconnect()
+                delay(500)
+                engine.connect(cfg).getOrThrow()
+            }
+            e2ee = !e2eeKey.isNullOrBlank()
             accepted = true
             state = if (incoming) "متصل" else "جاري الرنين…"
             setSpeaker(speaker)
@@ -280,8 +291,11 @@ private fun friendlyCallError(t: Throwable): String {
     val raw = t.message.orEmpty()
     if (raw.contains("livekit_not_configured", true)) return "خدمة المكالمات غير متاحة حالياً"
     if (raw.contains("call_no_longer_available", true)) return "هذه المكالمة لم تعد متاحة"
+    if (raw.contains("microphone_permission_required", true)) return "يلزم السماح بالميكروفون لإجراء المكالمة"
+    if (raw.contains("microphone_publish_failed", true)) return "تعذر تشغيل الميكروفون. أغلق أي تطبيق يستخدمه وحاول مرة أخرى"
+    if (raw.contains("camera_publish_failed", true)) return "تعذر تشغيل الكاميرا. أغلق أي تطبيق يستخدمها وحاول مرة أخرى"
     if (t is ApiException && t.status >= 500) return "تعذر الاتصال بخدمة المكالمات. حاول مرة أخرى"
-    return "تعذر الاتصال. تحقق من صلاحية الميكروفون واتصال الإنترنت وحاول مجدداً."
+    return "تعذر إنشاء الاتصال الصوتي. تحقق من الإنترنت وحاول مرة أخرى."
 }
 
 @Composable

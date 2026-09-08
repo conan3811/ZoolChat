@@ -198,6 +198,24 @@ private fun ProductionNav(
                     onBack={nav.popBackStack()},
                     onChat={c->vm.openDirect(c.userId){id->nav.navigate("prodchat/$id")}},
                     onCall={c->nav.navigate("livecall/new/${c.userId}/false")},
+                    onProfile={c->nav.navigate("user/${c.userId}")},
+                )
+            }
+            composable("user/{peer}") { entry ->
+                val peer=entry.arguments?.getString("peer").orEmpty()
+                val fallback=searchResults.firstOrNull{it.userId==peer} ?: contacts.firstOrNull{it.userId==peer}
+                ContactInfoScreen(
+                    api=vm.api,
+                    userId=peer,
+                    chatId="",
+                    messages=emptyList(),
+                    fallbackDisplayName=fallback?.displayName,
+                    fallbackUsername=fallback?.username,
+                    fallbackPhotoUrl=fallback?.photoUrl,
+                    onBack={nav.popBackStack()},
+                    onMessage={vm.openDirect(peer){nav.navigate("prodchat/$it")}},
+                    onCall={video->nav.navigate("livecall/new/$peer/$video")},
+                    onShared={},
                 )
             }
             composable("prodchat/{id}"){entry->
