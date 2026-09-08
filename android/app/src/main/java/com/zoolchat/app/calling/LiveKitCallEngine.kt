@@ -100,8 +100,17 @@ class LiveKitCallEngine(private val context: Context) : CallEngine {
     fun setSpeakerEnabled(enabled:Boolean) {
         val handler=audioHandler ?: return
         runCatching {
-            val device=handler.availableAudioDevices.firstOrNull { it.javaClass.simpleName == if(enabled) "Speakerphone" else "Earpiece" }
-            handler.selectDevice(device)
+            if (enabled) {
+                // Force speaker only while the user explicitly enables it. Matching by simple
+                // class name keeps this compatible with the AudioSwitch device implementation
+                // bundled by LiveKit without leaking vendor/device details into the UI.
+                val speaker=handler.availableAudioDevices.firstOrNull { it.javaClass.simpleName == "Speakerphone" }
+                if (speaker != null) handler.selectDevice(speaker)
+            } else {
+                // Returning to automatic routing is important for wired/Bluetooth headsets.
+                // Forcing Earpiece here could steal audio back from an already-connected headset.
+                handler.selectDevice(null)
+            }
         }
     }
     fun useAutomaticAudioRoute() { runCatching { audioHandler?.selectDevice(null) } }
