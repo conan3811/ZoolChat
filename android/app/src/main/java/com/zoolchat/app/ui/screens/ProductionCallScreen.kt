@@ -124,7 +124,11 @@ fun ProductionCallScreen(
     }
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.all { it }) scope.launch { connectAfterPermission() }
+        val micGranted = grants[Manifest.permission.RECORD_AUDIO] == true
+        val cameraGranted = !video || grants[Manifest.permission.CAMERA] == true
+        // BLUETOOTH_CONNECT is optional for the call itself: when denied we still allow
+        // microphone/camera calling and simply fall back to the normal Android audio route.
+        if (micGranted && cameraGranted) scope.launch { connectAfterPermission() }
         else {
             connectionStarted = false
             error = "يلزم السماح بالميكروفون${if (video) " والكاميرا" else ""} لإجراء المكالمة"
@@ -136,7 +140,12 @@ fun ProductionCallScreen(
         // Stop the incoming ringtone immediately when the user presses Answer; do not keep it
         // playing while Android is showing a microphone/camera permission dialog.
         if (incoming) stopIncomingAlert()
-        permission.launch(if (video) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA) else arrayOf(Manifest.permission.RECORD_AUDIO))
+        val permissions = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (video) add(Manifest.permission.CAMERA)
+            if (android.os.Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        permission.launch(permissions.toTypedArray())
     }
 
     LaunchedEffect(Unit) {
@@ -278,7 +287,7 @@ fun ProductionCallScreen(
                 CallCtl(if (mic) Icons.Rounded.Mic else Icons.Rounded.MicOff) { mic = !mic; scope.launch { engine.setMicrophoneEnabled(mic) } }
                 if (video) CallCtl(if (camera) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff) { camera = !camera; scope.launch { engine.setCameraEnabled(camera) } }
                 if (video && camera) CallCtl(Icons.Rounded.Cameraswitch) { engine.switchCamera() }
-                CallCtl(Icons.Rounded.BluetoothAudio) { engine.useAutomaticAudioRoute() }
+                CallCtl(Icons.Rounded.BluetoothAudio) { speaker = false; engine.useAutomaticAudioRoute() }
                 CallCtl(if (speaker) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff) { speaker = !speaker; setSpeaker(speaker) }
                 FilledIconButton(onClick = { scope.launch { ended = true; activeCallId?.let { runCatching { api.endCall(it) } }; stopIncomingAlert(); engine.disconnect(); CallForegroundService.stop(context); setSpeaker(false); onEnd() } }, modifier = Modifier.size(62.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFE53935))) { Icon(Icons.Rounded.CallEnd, null, tint = Color.White) }
             }
