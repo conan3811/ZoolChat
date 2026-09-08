@@ -1,0 +1,28 @@
+name: Fix ZoolChat v0.32 stage2 Android regex
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - '.github/workflows/fix-v032-stage2-android-regex.yml'
+      - 'scripts/fix_stage2_android_regex.py'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+          fetch-depth: 0
+      - run: python3 scripts/fix_stage2_android_regex.py
+      - name: Commit compile fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android/app/src/main/java/com/zoolchat/app/auth/AuthRepository.kt
+          git diff --cached --check
+          git commit -m 'fix v0.32 stage2 Android two factor regex'
+          git push origin HEAD:zoolchat-v0.32-development
