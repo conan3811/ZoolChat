@@ -103,12 +103,19 @@ fun ProductionCallScreen(
                 startCamera = video && camera,
             )
             CallForegroundService.start(context, video)
-            val firstConnect = engine.connect(cfg)
-            if (firstConnect.isFailure) {
+            var connectedSuccessfully = false
+            var lastConnectFailure: Throwable? = null
+            for (attempt in 0..2) {
+                val result = engine.connect(cfg)
+                if (result.isSuccess) {
+                    connectedSuccessfully = true
+                    break
+                }
+                lastConnectFailure = result.exceptionOrNull()
                 engine.disconnect()
-                delay(500)
-                engine.connect(cfg).getOrThrow()
+                if (attempt < 2) delay(if (attempt == 0) 500 else 1_200)
             }
+            if (!connectedSuccessfully) throw lastConnectFailure ?: IllegalStateException("call_media_connect_failed")
             e2ee = !e2eeKey.isNullOrBlank()
             accepted = true
             state = if (incoming) "متصل" else "جاري الرنين…"
@@ -262,7 +269,12 @@ fun ProductionCallScreen(
             Spacer(Modifier.weight(1f)); Icon(if (video) Icons.Rounded.Videocam else Icons.Rounded.PhoneInTalk, null, modifier = Modifier.size(92.dp), tint = Color.White); Spacer(Modifier.height(18.dp)); Text(state, color = Color.White, style = MaterialTheme.typography.titleLarge); Spacer(Modifier.weight(1f))
         }
 
-        if (error != null) Text(error!!, color = Color(0xFFFF6B6B), modifier = Modifier.padding(12.dp))
+        if (error != null) {
+            Text(error!!, color = Color(0xFFFF6B6B), modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+            if (!incoming || !accepted) {
+                TextButton(onClick = { requestAndConnect() }) { Text("إعادة المحاولة") }
+            }
+        }
 
         if (incoming && !accepted) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 22.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -300,11 +312,16 @@ private fun friendlyCallError(t: Throwable): String {
     val raw = t.message.orEmpty()
     if (raw.contains("livekit_not_configured", true)) return "خدمة المكالمات غير متاحة حالياً"
     if (raw.contains("call_no_longer_available", true)) return "هذه المكالمة لم تعد متاحة"
+    if (raw.contains("peer_not_found", true)) return "هذا المستخدم غير متاح للمكالمة حالياً"
+    if (raw.contains("blocked", true)) return "لا يمكن إجراء مكالمة مع هذا المستخدم"
     if (raw.contains("microphone_permission_required", true)) return "يلزم السماح بالميكروفون لإجراء المكالمة"
     if (raw.contains("microphone_publish_failed", true)) return "تعذر تشغيل الميكروفون. أغلق أي تطبيق يستخدمه وحاول مرة أخرى"
     if (raw.contains("camera_publish_failed", true)) return "تعذر تشغيل الكاميرا. أغلق أي تطبيق يستخدمها وحاول مرة أخرى"
+    if (t is ApiException && t.status == 401) return "انتهت جلسة الدخول. افتح التطبيق وسجّل الدخول مرة أخرى"
+    if (t is ApiException && t.status == 429) return "تم إجراء محاولات كثيرة. انتظر قليلاً ثم حاول مرة أخرى"
     if (t is ApiException && t.status >= 500) return "تعذر الاتصال بخدمة المكالمات. حاول مرة أخرى"
-    return "تعذر إنشاء الاتصال الصوتي. تحقق من الإنترنت وحاول مرة أخرى."
+    if (t is java.io.IOException) return "تعذر الوصول إلى الشبكة. تحقق من اتصال الإنترنت وحاول مرة أخرى"
+    return "تعذر بدء المكالمة. حاول مرة أخرى."
 }
 
 @Composable

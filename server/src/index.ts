@@ -444,9 +444,13 @@ app.get('/api/chats', requireAuth, async (req, res) => {
 app.post('/api/chats/direct', requireAuth, async (req, res) => {
   const peer = z.object({ userId: z.string().uuid() }).parse(req.body).userId, uid = req.zoolUser!.id;
   if (peer === uid) return res.status(400).json({ error: 'cannot_chat_self' });
-  const blocked = await pool.query(`SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)`, [uid, peer]); if (blocked.rowCount) return res.status(403).json({ error: 'blocked' });
-  const [a, b] = [uid, peer].sort(); const existing = await pool.query(`SELECT chat_id FROM direct_chats WHERE user_a=$1 AND user_b=$2`, [a, b]); let chatId = existing.rows[0]?.chat_id;
-  if (!chatId) chatId = await tx(async c => { const cr = await c.query(`INSERT INTO chats(type) VALUES('direct') RETURNING id`); const id = cr.rows[0].id; await c.query(`INSERT INTO direct_chats(user_a,user_b,chat_id) VALUES($1,$2,$3)`, [a, b, id]); await c.query(`INSERT INTO chat_members(chat_id,user_id) VALUES($1,$2),($1,$3)`, [id, a, b]); return id; });
+  const peerExists = await pool.query(`SELECT 1 FROM users WHERE id=$1 AND account_status='active'`, [peer]);
+  if (!peerExists.rowCount) return res.status(404).json({ error: 'peer_not_found' });
+  const blocked = await pool.query(`SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)`, [uid, peer]);
+  if (blocked.rowCount) return res.status(403).json({ error: 'blocked' });
+  // ensureDirectChat rechecks inside a transaction, so rapid/double taps cannot race into
+  // duplicate direct chats or a unique-constraint 500 response.
+  const chatId = await ensureDirectChat(uid, peer);
   res.json({ chat: { id: chatId, type: 'direct', peerUserId: peer } });
 });
 app.get('/api/chats/:id/messages', requireAuth, async (req, res) => {
@@ -720,25 +724,49 @@ app.post('/api/calls', callRateLimit, requireAuth, async (req, res) => {
     const b = z.object({ peerUserIds: z.array(z.string().uuid()).min(1).max(1), type: z.enum(['audio','video']) }).parse(req.body);
     const peers = [...new Set(b.peerUserIds)].filter(id => id !== req.zoolUser!.id);
     if (!peers.length) return res.status(400).json({ error: 'invalid_call_peers' });
-    const existingPeers = await pool.query(`SELECT id FROM users WHERE id=ANY($1::uuid[])`, [peers]);
+    const existingPeers = await pool.query(`SELECT id FROM users WHERE id=ANY($1::uuid[]) AND account_status='active'`, [peers]);
     if (existingPeers.rowCount !== peers.length) return res.status(404).json({ error: 'peer_not_found' });
     const blocked = await pool.query(`SELECT 1 FROM blocks WHERE (blocker_id=$1 AND blocked_id=ANY($2::uuid[])) OR (blocked_id=$1 AND blocker_id=ANY($2::uuid[])) LIMIT 1`, [req.zoolUser!.id, peers]);
     if (blocked.rowCount) return res.status(403).json({ error: 'blocked' });
     const roomName = `call_${randomUUID().replaceAll('-', '')}`;
-    const cr = await pool.query(`INSERT INTO calls(room_name,initiator_id,type) VALUES($1,$2,$3) RETURNING *`, [roomName, req.zoolUser!.id, b.type]);
-    const callId = cr.rows[0].id;
-    await pool.query(`INSERT INTO call_participants(call_id,user_id,status,joined_at) VALUES($1,$2,'joined',now())`, [callId, req.zoolUser!.id]);
-    for (const peer of peers) await pool.query(`INSERT INTO call_participants(call_id,user_id,status) VALUES($1,$2,'invited') ON CONFLICT DO NOTHING`, [callId, peer]);
-    for (const peer of peers) emitTo(peer,{type:'call.invite',data:{callId,callerUserId:req.zoolUser!.id,callerName:req.zoolUser!.displayName,mode:b.type}}); const tokens = await fcmTokens(peers); await sendData(tokens, { type: 'call_invite', callId, callerName: req.zoolUser!.displayName, mode: b.type }, true);
-    await syncCallTimeline(callId); const conn = await livekitToken(req.zoolUser!.id, req.zoolUser!.displayName, roomName); res.status(201).json({ callId, mode: b.type, peerUserId: peers[0], e2eeMode:'client-derived-p256', ...conn });
+
+    // Validate/generate LiveKit connection material before persisting a ringing call. If the
+    // media service is unavailable, the caller receives a clean failure and no stale call row is
+    // left behind for the callee.
+    const conn = await livekitToken(req.zoolUser!.id, req.zoolUser!.displayName, roomName);
+    const callId = await tx(async c => {
+      const cr = await c.query(`INSERT INTO calls(room_name,initiator_id,type) VALUES($1,$2,$3) RETURNING id`, [roomName, req.zoolUser!.id, b.type]);
+      const id = String(cr.rows[0].id);
+      await c.query(`INSERT INTO call_participants(call_id,user_id,status,joined_at) VALUES($1,$2,'joined',now())`, [id, req.zoolUser!.id]);
+      for (const peer of peers) await c.query(`INSERT INTO call_participants(call_id,user_id,status) VALUES($1,$2,'invited') ON CONFLICT DO NOTHING`, [id, peer]);
+      return id;
+    });
+
+    // A chat-timeline refresh or push outage must never turn an already-created call into a 500
+    // on the caller. Realtime delivery is immediate; timeline and FCM are best-effort side effects.
+    for (const peer of peers) emitTo(peer,{type:'call.invite',data:{callId,callerUserId:req.zoolUser!.id,callerName:req.zoolUser!.displayName,mode:b.type}});
+    void syncCallTimeline(callId).catch(() => console.warn('call_timeline_sync_failed'));
+    void (async () => {
+      const tokens = await fcmTokens(peers);
+      await sendData(tokens, { type: 'call_invite', callId, callerName: req.zoolUser!.displayName, mode: b.type }, true);
+    })().catch(() => console.warn('call_invite_delivery_failed'));
+    res.status(201).json({ callId, mode: b.type, peerUserId: peers[0], e2eeMode:'client-derived-p256', ...conn });
   } catch (e: any) { if (e.message === 'livekit_not_configured') return res.status(503).json({ error: 'livekit_not_configured' }); throw e; }
 });
 app.post('/api/calls/:id/accept', requireAuth, async (req, res) => {
   try {
     const r = await pool.query(`SELECT c.* FROM calls c JOIN call_participants cp ON cp.call_id=c.id WHERE c.id=$1 AND cp.user_id=$2`, [req.params.id, req.zoolUser!.id]); if (!r.rowCount) return res.status(404).json({ error: 'call_not_found' });
     if (!['ringing','active'].includes(r.rows[0].status)) return res.status(409).json({ error: 'call_no_longer_available' });
-    await pool.query(`UPDATE call_participants SET status='joined',joined_at=now() WHERE call_id=$1 AND user_id=$2`, [req.params.id, req.zoolUser!.id]); await pool.query(`UPDATE calls SET status='active',answered_at=COALESCE(answered_at,now()) WHERE id=$1`,[req.params.id]); emitTo(r.rows[0].initiator_id,{type:'call.accepted',data:{callId:req.params.id}});
-    await syncCallTimeline(String(req.params.id)); const conn = await livekitToken(req.zoolUser!.id, req.zoolUser!.displayName, r.rows[0].room_name); res.json({ callId: req.params.id, mode: r.rows[0].type, peerUserId: r.rows[0].initiator_id, e2eeMode:'client-derived-p256', ...conn });
+    // Obtain media credentials before announcing acceptance, otherwise a LiveKit configuration
+    // failure could leave the call marked active while the callee received an error.
+    const conn = await livekitToken(req.zoolUser!.id, req.zoolUser!.displayName, r.rows[0].room_name);
+    await tx(async c => {
+      await c.query(`UPDATE call_participants SET status='joined',joined_at=COALESCE(joined_at,now()) WHERE call_id=$1 AND user_id=$2`, [req.params.id, req.zoolUser!.id]);
+      await c.query(`UPDATE calls SET status='active',answered_at=COALESCE(answered_at,now()) WHERE id=$1`,[req.params.id]);
+    });
+    emitTo(r.rows[0].initiator_id,{type:'call.accepted',data:{callId:req.params.id}});
+    void syncCallTimeline(String(req.params.id)).catch(() => console.warn('call_timeline_sync_failed'));
+    res.json({ callId: req.params.id, mode: r.rows[0].type, peerUserId: r.rows[0].initiator_id, e2eeMode:'client-derived-p256', ...conn });
   } catch (e: any) { if (e.message === 'livekit_not_configured') return res.status(503).json({ error: 'livekit_not_configured' }); throw e; }
 });
 app.post('/api/calls/:id/decline', requireAuth, async (req, res) => {
@@ -746,13 +774,13 @@ app.post('/api/calls/:id/decline', requireAuth, async (req, res) => {
   if(!r.rowCount)return res.status(404).json({error:'call_not_found'});
   await pool.query(`UPDATE call_participants SET status='declined',left_at=now() WHERE call_id=$1 AND user_id=$2`, [req.params.id, uid]);
   await pool.query(`UPDATE calls SET status='declined',ended_at=COALESCE(ended_at,now()),ended_by=$2 WHERE id=$1 AND status='ringing'`,[req.params.id,uid]);
-  await syncCallTimeline(String(req.params.id)); emitTo(r.rows[0].initiator_id,{type:'call.declined',data:{callId:req.params.id}});res.json({ok:true});
+  void syncCallTimeline(String(req.params.id)).catch(() => console.warn('call_timeline_sync_failed')); emitTo(r.rows[0].initiator_id,{type:'call.declined',data:{callId:req.params.id}});res.json({ok:true});
 });
 app.post('/api/calls/:id/end', requireAuth, async (req,res)=>{
   const uid=req.zoolUser!.id;const r=await pool.query(`SELECT c.id FROM calls c JOIN call_participants cp ON cp.call_id=c.id WHERE c.id=$1 AND cp.user_id=$2`,[req.params.id,uid]);if(!r.rowCount)return res.status(404).json({error:'call_not_found'});
   await pool.query(`UPDATE call_participants SET status='left',left_at=COALESCE(left_at,now()) WHERE call_id=$1 AND user_id=$2`,[req.params.id,uid]);
   await pool.query(`UPDATE calls SET status='ended',ended_at=COALESCE(ended_at,now()),ended_by=$2 WHERE id=$1`,[req.params.id,uid]);
-  const callId=String(req.params.id);await syncCallTimeline(callId);const peers=await pool.query(`SELECT user_id FROM call_participants WHERE call_id=$1 AND user_id<>$2`,[callId,uid]);for(const p of peers.rows)emitTo(p.user_id,{type:'call.ended',data:{callId}});const tokens=await fcmTokens(peers.rows.map(x=>x.user_id));await sendData(tokens,{type:'call_cancelled',callId},true);res.json({ok:true});
+  const callId=String(req.params.id);void syncCallTimeline(callId).catch(() => console.warn('call_timeline_sync_failed'));const peers=await pool.query(`SELECT user_id FROM call_participants WHERE call_id=$1 AND user_id<>$2`,[callId,uid]);for(const p of peers.rows)emitTo(p.user_id,{type:'call.ended',data:{callId}});void (async()=>{const tokens=await fcmTokens(peers.rows.map(x=>x.user_id));await sendData(tokens,{type:'call_cancelled',callId},true);})().catch(()=>console.warn('call_cancel_delivery_failed'));res.json({ok:true});
 });
 app.get('/api/calls', requireAuth, async (req,res)=>{
   const uid=req.zoolUser!.id;const r=await pool.query(`SELECT c.id,c.type,c.status,c.created_at,c.answered_at,c.ended_at,c.initiator_id,cp.status participant_status,

@@ -220,11 +220,17 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openDirect(userId: String, onReady: (String) -> Unit) {
         viewModelScope.launch {
-            runCatching {
-                val c = api.createDirectChat(userId)
-                sync.refreshChats()
-                onReady(c.getString("id"))
-            }.onFailure { _error.value = it.message }
+            runCatching { api.createDirectChat(userId).getString("id") }
+                .onSuccess { chatId ->
+                    // Navigation must depend only on successful direct-chat creation. A later
+                    // chat-list refresh is useful for title/peer metadata, but must not make the
+                    // Message button appear broken when the chat already exists on the server.
+                    onReady(chatId)
+                    viewModelScope.launch {
+                        runCatching { sync.refreshChats() }.onFailure { _error.value = it.message }
+                    }
+                }
+                .onFailure { _error.value = it.message }
         }
     }
 
