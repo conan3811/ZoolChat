@@ -6,7 +6,7 @@ import {resolveAccessToken} from './freeAuth.js';
 declare global {
   namespace Express {
     interface Request {
-      zoolUser?: { id:string; firebaseUid?:string; phoneE164?:string; displayName:string; authMode?:'free'|'firebase'|'dev' }
+      zoolUser?: { id:string; firebaseUid?:string; phoneE164?:string; displayName:string; authMode?:'free'|'firebase'|'dev'; sessionId?:string }
     }
   }
 }
@@ -93,7 +93,7 @@ export async function requireAuth(req:Request,res:Response,next:NextFunction){
       const raw=h.slice(7).trim();
       const free=await resolveAccessToken(raw);
       if(free){
-        req.zoolUser={id:free.id,firebaseUid:free.firebase_uid??undefined,phoneE164:free.phone_e164??undefined,displayName:free.display_name,authMode:'free'};
+        req.zoolUser={id:free.id,firebaseUid:free.firebase_uid??undefined,phoneE164:free.phone_e164??undefined,displayName:free.display_name,authMode:'free',sessionId:String(free.session_id)};
         return handleAuthenticatedV032(req,res,next);
       }
       if(process.env.FIREBASE_AUTH_ENABLED!=='false'){

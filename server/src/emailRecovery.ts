@@ -111,6 +111,8 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
       await c.query('UPDATE email_challenges SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',[userId]);
       await c.query('UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[userId]);
       await c.query('UPDATE devices SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[userId]);
+      await c.query('UPDATE user_two_factor_settings SET enabled=false,enabled_at=NULL,updated_at=now() WHERE user_id=$1',[userId]);
+      await c.query('UPDATE two_factor_challenges SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',[userId]);
       await c.query('DELETE FROM account_recovery WHERE user_id=$1',[userId]);
       return userId;
     });
