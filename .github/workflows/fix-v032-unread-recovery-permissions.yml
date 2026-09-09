@@ -1,0 +1,196 @@
+name: Fix v0.32 unread recovery permissions
+
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - 'scripts/fix_v032_unread_recovery_permissions.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+          fetch-depth: 0
+
+      - name: Apply only the three requested runtime fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt')
+          s=p.read_text()
+          old='''        items.forEach { if (!it.id.startsWith("local:")) runCatching { api.markDelivered(chatId, it.id) } }
+        return PageLoadResult(page.hasMore, page.nextCursor)
+'''
+          new='''        items.forEach { if (!it.id.startsWith("local:")) runCatching { api.markDelivered(chatId, it.id) } }
+        val myUserId = SessionStore(context).currentUserId
+        items.lastOrNull { it.senderId != myUserId && !it.id.startsWith("local:") }?.let { latestIncoming ->
+            runCatching { api.markRead(chatId, latestIncoming.id) }.onSuccess { clearUnread(chatId) }
+        }
+        return PageLoadResult(page.hasMore, page.nextCursor)
+'''
+          assert old in s, 'refreshMessages anchor changed'
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('android/app/src/main/java/com/zoolchat/app/MainActivity.kt')
+          s=p.read_text()
+          old='''import com.zoolchat.app.notifications.NotificationHelper
+import com.zoolchat.app.ui.theme.ThemeMode
+'''
+          new='''import com.zoolchat.app.notifications.NotificationHelper
+import com.zoolchat.app.state.ZoolAppViewModel
+import com.zoolchat.app.ui.theme.ThemeMode
+'''
+          assert old in s, 'MainActivity import anchor changed'
+          s=s.replace(old,new,1)
+          old='''        if (requestCode == REQUEST_CONTACTS && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !isFinishing) {
+            // Authenticated bootstrap calls discoverContacts(); recreate once so it runs immediately
+            // with READ_CONTACTS already granted and populates matching ZoolChat users.
+            recreate()
+        }
+'''
+          new='''        if (requestCode == REQUEST_CONTACTS && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !isFinishing) {
+            // Refresh contacts in-place. Recreating the Activity here can leave some OEM devices
+            // looking frozen immediately after the system permission dialog closes.
+            androidx.lifecycle.ViewModelProvider(this)[ZoolAppViewModel::class.java].discoverContacts()
+        }
+'''
+          assert old in s, 'MainActivity permission callback changed'
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionCallScreen.kt')
+          s=p.read_text()
+          start=s.index('    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions())')
+          end=s.index('\n\n    LaunchedEffect(Unit) {', start)
+          old=s[start:end]
+          new='''    fun permissionGranted(permission: String): Boolean =
+        androidx.core.content.ContextCompat.checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    lateinit var cameraPermission: androidx.activity.result.ActivityResultLauncher<String>
+    cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scope.launch { connectAfterPermission() }
+        else {
+            connectionStarted = false
+            error = "يلزم السماح بالكاميرا لإجراء مكالمة فيديو"
+        }
+    }
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            connectionStarted = false
+            error = "يلزم السماح بالميكروفون لإجراء المكالمة"
+        } else if (video && !permissionGranted(Manifest.permission.CAMERA)) {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        } else scope.launch { connectAfterPermission() }
+    }
+
+    fun requestAndConnect() {
+        error = null
+        if (incoming) stopIncomingAlert()
+        when {
+            !permissionGranted(Manifest.permission.RECORD_AUDIO) -> microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            video && !permissionGranted(Manifest.permission.CAMERA) -> cameraPermission.launch(Manifest.permission.CAMERA)
+            else -> scope.launch { connectAfterPermission() }
+        }
+    }'''
+          p.write_text(s[:start]+new+s[end:])
+
+          p=Path('server/src/emailRecovery.ts')
+          s=p.read_text()
+          old='''    const u=await pool.query("SELECT id FROM users WHERE lower(email)=$1 AND email_verified_at IS NOT NULL AND account_status='active'",[b.data.email]);'''
+          new='''    const u=await pool.query("SELECT id FROM users WHERE lower(email)=$1 AND account_status='active'",[b.data.email]);'''
+          assert old in s, 'password request query changed'
+          s=s.replace(old,new,1)
+          old='''      const u=await c.query("SELECT id FROM users WHERE lower(email)=$1 AND email_verified_at IS NOT NULL AND account_status='active' FOR UPDATE",[b.data.email]);'''
+          new='''      const u=await c.query("SELECT id FROM users WHERE lower(email)=$1 AND account_status='active' FOR UPDATE",[b.data.email]);'''
+          assert old in s, 'password reset query changed'
+          s=s.replace(old,new,1)
+          old='''      await c.query('UPDATE user_credentials SET password_hash=$2,updated_at=now() WHERE user_id=$1',[userId,passwordHash]);'''
+          new='''      await c.query('UPDATE user_credentials SET password_hash=$2,updated_at=now() WHERE user_id=$1',[userId,passwordHash]);
+      await c.query('UPDATE users SET email_verified_at=COALESCE(email_verified_at,now()),updated_at=now() WHERE id=$1',[userId]);'''
+          assert old in s, 'password reset success anchor changed'
+          p.write_text(s.replace(old,new,1))
+          PY
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            android/app/src/main/java/com/zoolchat/app/MainActivity.kt \
+            android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt \
+            android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionCallScreen.kt \
+            server/src/emailRecovery.ts | sort)"
+          test "$changed" = "$expected"
+
+      - name: Verify requested behavior statically
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          sync=Path('android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt').read_text()
+          assert 'api.markRead(chatId, latestIncoming.id)' in sync
+          assert 'onSuccess { clearUnread(chatId) }' in sync
+          main=Path('android/app/src/main/java/com/zoolchat/app/MainActivity.kt').read_text()
+          assert 'recreate()' not in main
+          assert 'discoverContacts()' in main
+          call=Path('android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionCallScreen.kt').read_text()
+          assert 'RequestMultiplePermissions' not in call
+          assert 'RequestPermission()' in call
+          assert 'BLUETOOTH_CONNECT' not in call[call.index('fun requestAndConnect()'):call.index('LaunchedEffect(Unit)',call.index('fun requestAndConnect()'))]
+          recovery=Path('server/src/emailRecovery.ts').read_text()
+          request=recovery[recovery.index("app.post('/api/auth/password/request'"):recovery.index("app.post('/api/auth/password/reset'")]
+          assert 'email_verified_at IS NOT NULL' not in request
+          print('PASS: scoped fixes present')
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Build backend source
+        working-directory: server
+        run: npm ci && npm run build
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Build requested Android fixes
+        working-directory: android
+        shell: bash
+        run: gradle :app:assemblePublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+
+      - name: Commit only requested source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android/app/src/main/java/com/zoolchat/app/MainActivity.kt \
+                  android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt \
+                  android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionCallScreen.kt \
+                  server/src/emailRecovery.ts
+          test "$(git diff --cached --name-only | wc -l)" -eq 4
+          git diff --cached --check
+          git commit -m 'fix unread recovery email and permission hangs'
+          git push origin HEAD:zoolchat-v0.32-development
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZoolChat-v032-runtime-fixes-no-firebase
+          path: android/app/build/outputs/apk/public/debug/*.apk
+          if-no-files-found: error
