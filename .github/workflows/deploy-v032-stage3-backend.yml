@@ -1,0 +1,96 @@
+name: Deploy ZoolChat v0.32 stage three backend
+
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - 'scripts/deploy_stage3_backend_live.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-package-deploy-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+          fetch-depth: 0
+
+      - name: Patch only Stage3 endpoint on current live source
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_LIVE='dce1588aa793ad60296368ef87a44017edba7cb9'
+          git fetch origin zoolchat-v0.27-cloud-beta
+          CURRENT_LIVE="$(git rev-parse origin/zoolchat-v0.27-cloud-beta)"
+          if [ "$CURRENT_LIVE" != "$EXPECTED_LIVE" ]; then
+            echo 'Live deployment branch moved; refusing unrelated changes.' >&2
+            exit 1
+          fi
+          git checkout --detach "$EXPECTED_LIVE"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('server/src/index.ts')
+          s=p.read_text()
+          if "app.get('/api/groups/:id/e2ee-keys'" not in s:
+              anchor="app.get('/api/groups/:id', requireAuth, async (req,res)=>{"
+              if anchor not in s:
+                  raise SystemExit('group info anchor not found; refusing broad patch')
+              block="""app.get('/api/groups/:id/e2ee-keys', requireAuth, async (req,res)=>{\n  const chatId=String(req.params.id),uid=req.zoolUser!.id;\n  if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});\n  const r=await pool.query(`SELECT cm.user_id,k.algorithm,k.public_key_b64,k.fingerprint_sha256,k.updated_at\n    FROM chat_members cm LEFT JOIN user_crypto_keys k ON k.user_id=cm.user_id\n    WHERE cm.chat_id=$1 ORDER BY cm.joined_at,cm.user_id`,[chatId]);\n  const keys=r.rows.filter(x=>x.public_key_b64).map(x=>({\n    userId:String(x.user_id),algorithm:String(x.algorithm||'P256-ECDH'),publicKeyB64:String(x.public_key_b64),\n    fingerprintSha256:String(x.fingerprint_sha256),updatedAt:x.updated_at?new Date(x.updated_at).toISOString():null,\n  }));\n  const missingUserIds=r.rows.filter(x=>!x.public_key_b64).map(x=>String(x.user_id));\n  res.json({keys,missingUserIds});\n});\n"""
+              s=s.replace(anchor,block+anchor,1)
+              p.write_text(s)
+          if s.count("app.get('/api/groups/:id/e2ee-keys'") != 1:
+              raise SystemExit('unexpected Stage3 endpoint count')
+          PY
+          git diff -- server/src/index.ts
+          git diff --check
+
+      - name: Build patched backend before packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+        working-directory: server
+
+      - name: Package exact patched backend and build deployment image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf /tmp/server-v032.tar.gz -C server package.json package-lock.json tsconfig.json src migrations
+          base64 -w 76 /tmp/server-v032.tar.gz > cloud/server-v032.tar.gz.b64
+          sha256sum /tmp/server-v032.tar.gz | awk '{print $1}' > cloud/server-v032.sha256
+          docker build --file cloud/Dockerfile --tag zoolchat-v032-stage3-live-candidate cloud
+          git diff --check
+
+      - name: Push only Stage3 live backend package/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/src/index.ts cloud/server-v032.tar.gz.b64 cloud/server-v032.sha256
+          git diff --cached --check
+          git commit -m 'package live v0.32 stage3 group E2EE endpoint'
+          git push origin HEAD:zoolchat-v0.27-cloud-beta
+
+      - name: Verify live rollout with fast polling
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout zoolchat-v0.32-development -- cloud/API_BASE_URL.txt
+          API_URL="$(tr -d '\r\n' < cloud/API_BASE_URL.txt)"
+          case "$API_URL" in https://*) ;; *) echo 'Invalid live backend configuration' >&2; exit 1;; esac
+          for i in $(seq 1 180); do
+            HEALTH="$(curl --silent --max-time 8 "$API_URL/health" || true)"
+            CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 "$API_URL/api/groups/00000000-0000-0000-0000-000000000000/e2ee-keys" || true)"
+            if HEALTH_JSON="$HEALTH" node -e "const h=JSON.parse(process.env.HEALTH_JSON||'{}'); if(h.ok!==true||h.db!==true||h.livekitConfigured!==true||h.firebaseConfigured!==true||h.emailConfigured!==true) process.exit(1)" >/dev/null 2>&1 && [ "$CODE" = '401' ]; then
+              echo 'PASS: live Stage3 endpoint active, protected, and dependencies healthy'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'Live Stage3 rollout verification timed out' >&2
+          exit 1
