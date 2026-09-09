@@ -1,0 +1,93 @@
+name: Implement ZoolChat v0.32 stage three
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - 'scripts/stage3_implement.trigger'
+permissions:
+  contents: write
+jobs:
+  validate-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zoolchat-v0.32-development
+          fetch-depth: 0
+      - name: Restore exact Stage2 ApiClient contract and apply Stage3 only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/java/com/zoolchat/app/network/ApiClient.kt')
+          s=p.read_text()
+          start=s.index('    suspend fun getPrivacy(): JSONObject')
+          tail='''    suspend fun getPrivacy(): JSONObject = get("/api/privacy").getJSONObject("privacy")
+              suspend fun updatePrivacy(
+                  readReceipts: Boolean? = null,
+                  showLastSeen: Boolean? = null,
+                  showOnline: Boolean? = null,
+                  profilePhotoVisibility: String? = null,
+                  aboutVisibility: String? = null,
+              ): JSONObject = put(
+                  "/api/privacy",
+                  JSONObject().apply {
+                      readReceipts?.let { put("readReceipts", it) }
+                      showLastSeen?.let { put("showLastSeen", it) }
+                      showOnline?.let { put("showOnline", it) }
+                      profilePhotoVisibility?.let { put("profilePhotoVisibility", it) }
+                      aboutVisibility?.let { put("aboutVisibility", it) }
+                  },
+              ).getJSONObject("privacy")
+
+              suspend fun exportAccount(): JSONObject = get("/api/account/export")
+              suspend fun deleteAccount() = delete("/api/account")
+          }
+          '''
+          tail='\n'.join(line[12:] if line.startswith('            ') else line for line in tail.splitlines())+'\n'
+          fixed=s[:start]+tail
+          assert 'suspend fun groupE2eeKeys(chatId: String)' in fixed
+          assert 'suspend fun exportAccount()' in fixed
+          assert 'suspend fun deleteAccount()' in fixed
+          p.write_text(fixed)
+          PY
+          python3 scripts/implement_stage3_group_e2ee.py
+          git diff --check
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Verify group cryptography, compile and lint before commit
+        working-directory: android
+        run: gradle :app:testPublicDebugUnitTest :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+      - name: Reject plaintext group fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'encryptGroupMessage' android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt
+          grep -q 'zcg2:' android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt
+          ! grep -q 'Group E2EE is not part' android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt
+      - name: Commit only Stage3 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            server/src/index.ts \
+            android/app/src/main/java/com/zoolchat/app/network/ApiClient.kt \
+            android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt \
+            android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt \
+            android/app/src/main/java/com/zoolchat/app/media/MediaRepository.kt \
+            android/app/src/main/java/com/zoolchat/app/ui/screens/ProductionChatScreen.kt
+          git diff --cached --check
+          git commit -m 'implement v0.32 stage3 group E2EE v2'
+          git push origin HEAD:zoolchat-v0.32-development
