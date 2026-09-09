@@ -36,3 +36,4 @@ jobs:
           path: /tmp/apk-tools
           if-no-files-found: error
 # Includes aapt2 for final manifest/package verification.
+# refreshed for v0.32 Stage3 final packaging 2026-09-09
