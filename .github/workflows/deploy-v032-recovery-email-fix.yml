@@ -28,7 +28,7 @@ jobs:
           test "$(git rev-parse origin/zoolchat-v0.27-cloud-beta)" = "$LIVE_HEAD"
           git checkout -B live-recovery origin/zoolchat-v0.27-cloud-beta
           git checkout "$VALIDATED" -- server/src/emailRecovery.ts
-          changed="$(git diff --name-only)"
+          changed="$(git diff HEAD --name-only)"
           test "$changed" = 'server/src/emailRecovery.ts'
       - uses: actions/setup-node@v4
         with:
@@ -45,8 +45,8 @@ jobs:
           tar -czf /tmp/server-v032.tar.gz -C server package.json package-lock.json tsconfig.json src migrations
           base64 -w 76 /tmp/server-v032.tar.gz > cloud/server-v032.tar.gz.b64
           sha256sum /tmp/server-v032.tar.gz | awk '{print $1}' > cloud/server-v032.sha256
-          git diff --check
-          actual="$(git diff --name-only | sort)"
+          git diff HEAD --check
+          actual="$(git diff HEAD --name-only | sort)"
           expected="$(printf '%s\n' cloud/server-v032.sha256 cloud/server-v032.tar.gz.b64 server/src/emailRecovery.ts | sort)"
           test "$actual" = "$expected"
       - name: Push exact recovery fix to live branch
