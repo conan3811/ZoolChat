@@ -309,10 +309,12 @@ class ZoolAppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun markRead(chatId: String) {
-        viewModelScope.launch { sync.clearUnread(chatId) }
         val myId = _currentUser.value?.id ?: return
         val lastIncoming = _messages.value[chatId].orEmpty().lastOrNull { it.senderId != myId && !it.id.startsWith("local:") } ?: return
-        viewModelScope.launch { runCatching { sync.markRead(chatId, lastIncoming.id); sync.refreshChats() } }
+        viewModelScope.launch {
+            runCatching { sync.markRead(chatId, lastIncoming.id); sync.refreshChats() }
+                .onFailure { _error.value = it.message }
+        }
     }
 
     private fun handleRealtime(event: JSONObject) {

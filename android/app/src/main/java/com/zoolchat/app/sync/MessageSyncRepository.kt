@@ -281,8 +281,8 @@ class MessageSyncRepository(
     }
 
     suspend fun markRead(chatId: String, messageId: String) {
-        clearUnread(chatId)
         api.markRead(chatId, messageId)
+        clearUnread(chatId)
     }
 
     companion object {

@@ -31,6 +31,7 @@ import com.zoolchat.app.auth.registerAccountCompatible
 import com.zoolchat.app.ui.i18n.AppLanguage
 import com.zoolchat.app.ui.i18n.I18n
 import com.zoolchat.app.ui.i18n.t
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -172,6 +173,7 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
     var confirm by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var codeSent by remember { mutableStateOf(false) }
+    var resendCooldownSeconds by remember { mutableIntStateOf(0) }
     var twoFactorChallenge by remember { mutableStateOf<String?>(null) }
     var twoFactorCode by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -188,6 +190,7 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
         confirm = ""
         code = ""
         codeSent = false
+        resendCooldownSeconds = 0
         twoFactorChallenge = null
         twoFactorCode = ""
         com.zoolchat.app.auth.RecentAuthSecret.clear()
@@ -198,6 +201,13 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
     BackHandler(enabled = (mode != "login" || twoFactorChallenge != null) && !loading) {
         if (twoFactorChallenge != null) { twoFactorChallenge = null; twoFactorCode = ""; com.zoolchat.app.auth.RecentAuthSecret.clear() }
         else changeMode("login")
+    }
+
+    LaunchedEffect(resendCooldownSeconds) {
+        if (resendCooldownSeconds > 0) {
+            delay(1_000)
+            resendCooldownSeconds -= 1
+        }
     }
 
     Column(
@@ -274,7 +284,37 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !loading,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
+            TextButton(
+                onClick = {
+                    loading = true
+                    error = null
+                    feedback = null
+                    scope.launch {
+                        try {
+                            auth.requestPasswordCode(email).getOrThrow()
+                            code = ""
+                            resendCooldownSeconds = 60
+                            feedback = authLabel(
+                                "تم طلب رمز مؤقت جديد. إذا كان البريد موثقاً ومسجلاً فسيصلك عبر البريد الإلكتروني.",
+                                "A new temporary code was requested. If the email is registered and verified, it will be sent by email.",
+                            )
+                        } catch (e: Exception) {
+                            error = e.message ?: authLabel("تعذر إعادة إرسال الرمز", "Unable to resend code")
+                        } finally {
+                            loading = false
+                        }
+                    }
+                },
+                enabled = !loading && resendCooldownSeconds == 0,
+            ) {
+                Text(
+                    if (resendCooldownSeconds > 0)
+                        authLabel("إعادة إرسال الرمز بعد ${resendCooldownSeconds}ث", "Resend code in ${resendCooldownSeconds}s")
+                    else authLabel("إعادة إرسال الرمز", "Resend code")
+                )
+            }
+            Spacer(Modifier.height(4.dp))
         }
 
         if (mode != "recover" || codeSent) {
@@ -352,6 +392,7 @@ fun PhoneAuthScreen(auth: AuthRepository, session: SessionStore, onSignedIn: () 
                             "recover" -> if (!codeSent) {
                                 auth.requestPasswordCode(email).getOrThrow()
                                 codeSent = true
+                                resendCooldownSeconds = 60
                                 feedback = authLabel(
                                     "إذا كان البريد موثقاً ومسجلاً، سيصلك رمز صالح لمدة 15 دقيقة.",
                                     "If this email is registered and verified, a code valid for 15 minutes will arrive.",
