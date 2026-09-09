@@ -1,101 +1,72 @@
 name: Deploy ZoolChat v0.32 stage two backend
+
 on:
   push:
     branches: [zoolchat-v0.32-development]
     paths:
       - 'scripts/deploy_stage2_backend_live.trigger'
+
 permissions:
   contents: write
+
 jobs:
-  validate-patch-and-deploy:
+  package-build-deploy-verify:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: zoolchat_stage2_live_patch_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci_stage2_patch_only
-        ports: ['5432:5432']
-        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
-    env:
-      DATABASE_URL: postgresql://postgres:ci_stage2_patch_only@localhost:5432/zoolchat_stage2_live_patch_test
-      FIREBASE_AUTH_ENABLED: 'false'
-      MAIL_HOST: 127.0.0.1
-      MAIL_PORT: '1025'
-      MAIL_FROM: 'ZoolChat Deployment Validation <noreply@example.invalid>'
-      MAIL_REQUIRE_TLS: 'false'
-      LIVEKIT_URL: ws://127.0.0.1:7880
-      LIVEKIT_API_KEY: ci-test-key
-      LIVEKIT_API_SECRET: ci-test-secret-not-for-production
     steps:
       - uses: actions/checkout@v4
         with:
           ref: zoolchat-v0.32-development
           fetch-depth: 0
-      - name: Preserve tested stage-two patch inputs
+
+      - name: Package exact tested live backend commit
         shell: bash
         run: |
           set -euo pipefail
-          cp scripts/deploy_stage2_backend_live.py /tmp/deploy_stage2_backend_live.py
-          cp server/src/twoFactor.ts /tmp/twoFactor.ts
-          cp server/migrations/018_v032_stage2_account_security.sql /tmp/018_v032_stage2_account_security.sql
-          cp cloud/API_BASE_URL.txt /tmp/API_BASE_URL.txt
-      - name: Patch live backend branch only
-        shell: bash
-        run: |
-          set -euo pipefail
-          git checkout zoolchat-v0.27-cloud-beta
-          cp /tmp/twoFactor.ts server/src/twoFactor.ts
-          cp /tmp/018_v032_stage2_account_security.sql server/migrations/018_v032_stage2_account_security.sql
-          python3 /tmp/deploy_stage2_backend_live.py
+          LIVE_COMMIT='3dfab2c0ceaede6c7896470aaf37aebce84c1fdb'
+          git fetch origin zoolchat-v0.27-cloud-beta
+          CURRENT_LIVE="$(git rev-parse origin/zoolchat-v0.27-cloud-beta)"
+          if [ "$CURRENT_LIVE" != "$LIVE_COMMIT" ]; then
+            echo 'Live deployment branch moved; refusing unrelated changes.' >&2
+            exit 1
+          fi
+          git checkout --detach "$LIVE_COMMIT"
+          tar -czf /tmp/server-v032.tar.gz -C server package.json package-lock.json tsconfig.json src migrations
+          base64 -w 76 /tmp/server-v032.tar.gz > cloud/server-v032.tar.gz.b64
+          sha256sum /tmp/server-v032.tar.gz | awk '{print $1}' > cloud/server-v032.sha256
           git diff --check
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: server/package-lock.json
-      - name: Compile patched live backend and apply migrations to isolated database
-        working-directory: server
+
+      - name: Build exact live deployment image
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --no-audit --no-fund
-          npm run build
-          node dist/migrate.js
-      - name: Commit tested backend patch to live deployment branch
+          docker build --file cloud/Dockerfile --tag zoolchat-v032-stage2-live-candidate cloud
+
+      - name: Push packaged backend to live deployment branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            server/src/index.ts \
-            server/src/auth.ts \
-            server/src/emailRecovery.ts \
-            server/src/profileV032.ts \
-            server/src/twoFactor.ts \
-            server/migrations/018_v032_stage2_account_security.sql
+          git add cloud/server-v032.tar.gz.b64 cloud/server-v032.sha256
           git diff --cached --check
-          git commit -m 'deploy live v0.32 stage2 account security and profiles'
+          git commit -m 'package live v0.32 stage2 backend from 3dfab2c'
           git push origin HEAD:zoolchat-v0.27-cloud-beta
-      - name: Verify stage-two routes after live rollout
+
+      - name: Verify live rollout with fast polling
         shell: bash
         run: |
           set -euo pipefail
-          API_URL="$(tr -d '\r\n' < /tmp/API_BASE_URL.txt)"
+          git checkout zoolchat-v0.32-development -- cloud/API_BASE_URL.txt
+          API_URL="$(tr -d '\r\n' < cloud/API_BASE_URL.txt)"
           case "$API_URL" in https://*) ;; *) echo 'Invalid live backend configuration' >&2; exit 1;; esac
-          ready=false
-          for i in $(seq 1 72); do
-            HEALTH="$(curl --silent --max-time 15 "$API_URL/health" || true)"
-            CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$API_URL/api/me/2fa" || true)"
-            if HEALTH_JSON="$HEALTH" node -e "const h=JSON.parse(process.env.HEALTH_JSON||'{}'); if(h.ok!==true||h.db!==true||h.livekitConfigured!==true||h.firebaseConfigured!==true||h.emailConfigured!==true) process.exit(1)" >/dev/null 2>&1; then
-              if [ "$CODE" = '401' ]; then ready=true; break; fi
+          for i in $(seq 1 180); do
+            HEALTH="$(curl --silent --max-time 10 "$API_URL/health" || true)"
+            CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$API_URL/api/me/2fa" || true)"
+            if HEALTH_JSON="$HEALTH" node -e "const h=JSON.parse(process.env.HEALTH_JSON||'{}'); if(h.ok!==true||h.db!==true||h.livekitConfigured!==true||h.firebaseConfigured!==true||h.emailConfigured!==true) process.exit(1)" >/dev/null 2>&1 && [ "$CODE" = '401' ]; then
+              echo 'PASS: live stage-two backend is active and 2FA requires authentication'
+              exit 0
             fi
-            sleep 10
+            sleep 2
           done
-          if [ "$ready" != true ]; then
-            echo 'Live stage-two rollout verification failed' >&2
-            exit 1
-          fi
-          echo 'PASS: live backend healthy and stage-two authenticated routes are active'
+          echo 'Live stage-two rollout verification timed out' >&2
+          exit 1
