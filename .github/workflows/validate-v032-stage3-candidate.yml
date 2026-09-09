@@ -1,0 +1,80 @@
+name: Validate ZoolChat v0.32 stage three candidate
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - 'scripts/stage3_candidate.trigger'
+permissions:
+  contents: read
+concurrency:
+  group: zoolchat-v032-stage3-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zoolchat_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_only_password
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci_only_password@localhost:5432/zoolchat_test
+      FIREBASE_AUTH_ENABLED: 'false'
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: ci-test-key
+      LIVEKIT_API_SECRET: ci-test-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/implement_stage3_group_e2ee.py
+      - run: python3 scripts/privacy_scan.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm run build
+        working-directory: server
+      - name: Stage three backend regression
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          node dist/migrate.js
+          node dist/index.js >/tmp/stage3.log 2>&1 &
+          trap 'cat /tmp/stage3.log || true' EXIT
+          for i in $(seq 1 20); do curl --fail --silent http://127.0.0.1:8080/health >/dev/null && break; sleep 1; done
+          node tests/stage3-group-e2ee.mjs
+          node tests/message-interactions.mjs
+          node tests/profile-meeting.mjs
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/implement_stage3_group_e2ee.py
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Real group crypto round-trip plus compile/lint
+        working-directory: android
+        run: gradle :app:testPublicDebugUnitTest :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+      - name: Fail if group transport can still fall back to plaintext
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'encryptGroupMessage' android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt
+          ! grep -q 'Group E2EE is not part' android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt
+          grep -q 'zcg2:' android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt
