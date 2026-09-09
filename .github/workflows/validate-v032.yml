@@ -98,6 +98,7 @@ jobs:
           node tests/email-recovery.mjs
           node tests/profile-meeting.mjs
           node tests/stage2-account-security.mjs
+          node tests/stage3-group-e2ee.mjs
         working-directory: server
   container-image:
     runs-on: ubuntu-latest
@@ -161,9 +162,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-      - name: Compile and validate Android
+      - name: Compile and validate Android plus group crypto
         working-directory: android
-        run: gradle :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+        run: gradle :app:testPublicDebugUnitTest :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+      - name: Reject plaintext group fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'encryptGroupMessage' android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt
+          grep -q 'zcg2:' android/app/src/main/java/com/zoolchat/app/crypto/E2eeManager.kt
+          ! grep -q 'Group E2EE is not part' android/app/src/main/java/com/zoolchat/app/sync/MessageSyncRepository.kt
       - uses: actions/upload-artifact@v4
         with:
           name: ZoolChat-v032-validation-only-no-firebase
@@ -171,4 +179,4 @@ jobs:
             android/app/build/outputs/apk/public/debug/*.apk
             android/app/build/reports/lint-results-publicDebug.*
           if-no-files-found: error
-# permanent full validation includes stage-two profile/session/two-factor regressions
+# permanent full validation includes stage-one, stage-two and stage-three group E2EE regressions
