@@ -680,6 +680,19 @@ app.post('/api/groups', requireAuth, async (req,res)=>{
   const tokens=await fcmTokens(members);await sendData(tokens,{type:'chat_sync',chatId:result.id},false);
   res.status(201).json({group:{id:result.id,type:'group',title:b.title,description:b.description,inviteCode:result.code}});
 });
+app.get('/api/groups/:id/e2ee-keys', requireAuth, async (req,res)=>{
+  const chatId=String(req.params.id),uid=req.zoolUser!.id;
+  if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
+  const r=await pool.query(`SELECT cm.user_id,k.algorithm,k.public_key_b64,k.fingerprint_sha256,k.updated_at
+    FROM chat_members cm LEFT JOIN user_crypto_keys k ON k.user_id=cm.user_id
+    WHERE cm.chat_id=$1 ORDER BY cm.joined_at,cm.user_id`,[chatId]);
+  const keys=r.rows.filter(x=>x.public_key_b64).map(x=>({
+    userId:String(x.user_id),algorithm:String(x.algorithm||'P256-ECDH'),publicKeyB64:String(x.public_key_b64),
+    fingerprintSha256:String(x.fingerprint_sha256),updatedAt:x.updated_at?new Date(x.updated_at).toISOString():null,
+  }));
+  const missingUserIds=r.rows.filter(x=>!x.public_key_b64).map(x=>String(x.user_id));
+  res.json({keys,missingUserIds});
+});
 app.get('/api/groups/:id', requireAuth, async (req,res)=>{
   const chatId=String(req.params.id),uid=req.zoolUser!.id;if(!(await membership(chatId,uid)))return res.status(403).json({error:'not_member'});
   const g=await pool.query(`SELECT c.id,c.title,gs.*,cm.role my_role FROM chats c JOIN group_settings gs ON gs.chat_id=c.id JOIN chat_members cm ON cm.chat_id=c.id AND cm.user_id=$2 WHERE c.id=$1 AND c.type='group'`,[chatId,uid]);if(!g.rowCount)return res.status(404).json({error:'group_not_found'});
