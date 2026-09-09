@@ -155,6 +155,10 @@ class MessageSyncRepository(
         db.messages().upsertAll(items.map { it.toEntity(localCrypto) })
         items.lastOrNull()?.let { last -> updatePreview(chatId, previewFor(last), last.createdAt) }
         items.forEach { if (!it.id.startsWith("local:")) runCatching { api.markDelivered(chatId, it.id) } }
+        val myUserId = SessionStore(context).currentUserId
+        items.lastOrNull { it.senderId != myUserId && !it.id.startsWith("local:") }?.let { latestIncoming ->
+            runCatching { api.markRead(chatId, latestIncoming.id) }.onSuccess { clearUnread(chatId) }
+        }
         return PageLoadResult(page.hasMore, page.nextCursor)
     }
 

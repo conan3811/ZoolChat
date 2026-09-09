@@ -130,29 +130,34 @@ fun ProductionCallScreen(
         }
     }
 
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        val micGranted = grants[Manifest.permission.RECORD_AUDIO] == true
-        val cameraGranted = !video || grants[Manifest.permission.CAMERA] == true
-        // BLUETOOTH_CONNECT is optional for the call itself: when denied we still allow
-        // microphone/camera calling and simply fall back to the normal Android audio route.
-        if (micGranted && cameraGranted) scope.launch { connectAfterPermission() }
+    fun permissionGranted(permission: String): Boolean =
+        androidx.core.content.ContextCompat.checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    lateinit var cameraPermission: androidx.activity.result.ActivityResultLauncher<String>
+    cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scope.launch { connectAfterPermission() }
         else {
             connectionStarted = false
-            error = "يلزم السماح بالميكروفون${if (video) " والكاميرا" else ""} لإجراء المكالمة"
+            error = "يلزم السماح بالكاميرا لإجراء مكالمة فيديو"
         }
+    }
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            connectionStarted = false
+            error = "يلزم السماح بالميكروفون لإجراء المكالمة"
+        } else if (video && !permissionGranted(Manifest.permission.CAMERA)) {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        } else scope.launch { connectAfterPermission() }
     }
 
     fun requestAndConnect() {
         error = null
-        // Stop the incoming ringtone immediately when the user presses Answer; do not keep it
-        // playing while Android is showing a microphone/camera permission dialog.
         if (incoming) stopIncomingAlert()
-        val permissions = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (video) add(Manifest.permission.CAMERA)
-            if (android.os.Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
+        when {
+            !permissionGranted(Manifest.permission.RECORD_AUDIO) -> microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            video && !permissionGranted(Manifest.permission.CAMERA) -> cameraPermission.launch(Manifest.permission.CAMERA)
+            else -> scope.launch { connectAfterPermission() }
         }
-        permission.launch(permissions.toTypedArray())
     }
 
     LaunchedEffect(Unit) {

@@ -90,7 +90,7 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
     const b=z.object({email:emailSchema}).safeParse(req.body);
     if(!b.success)return res.status(400).json({error:'invalid_request'});
     if(!emailDeliveryConfigured())return res.status(503).json({error:'email_delivery_unavailable'});
-    const u=await pool.query("SELECT id FROM users WHERE lower(email)=$1 AND email_verified_at IS NOT NULL AND account_status='active'",[b.data.email]);
+    const u=await pool.query("SELECT id FROM users WHERE lower(email)=$1 AND account_status='active'",[b.data.email]);
     if(u.rowCount)await issue(u.rows[0].id,b.data.email,'recover');
     res.status(202).json({ok:true});
   });
@@ -99,7 +99,7 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
     if(!b.success)return res.status(400).json({error:'invalid_request'});
     const passwordHash=await hashPassword(b.data.newPassword);
     const id=await tx(async c=>{
-      const u=await c.query("SELECT id FROM users WHERE lower(email)=$1 AND email_verified_at IS NOT NULL AND account_status='active' FOR UPDATE",[b.data.email]);
+      const u=await c.query("SELECT id FROM users WHERE lower(email)=$1 AND account_status='active' FOR UPDATE",[b.data.email]);
       if(!u.rowCount)return null;
       const userId=u.rows[0].id;
       const r=await c.query("SELECT * FROM email_challenges WHERE user_id=$1 AND email=$2 AND purpose='recover' AND consumed_at IS NULL AND expires_at>now() AND attempts<5 ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[userId,b.data.email]);
@@ -108,6 +108,7 @@ export function installEmailRecovery(app:Express,onSessionsRevoked:(id:string)=>
       await c.query('UPDATE email_challenges SET attempts=attempts+1 WHERE id=$1',[code.id]);
       if(!(await verifyPassword(b.data.code,code.code_hash)))return null;
       await c.query('UPDATE user_credentials SET password_hash=$2,updated_at=now() WHERE user_id=$1',[userId,passwordHash]);
+      await c.query('UPDATE users SET email_verified_at=COALESCE(email_verified_at,now()),updated_at=now() WHERE id=$1',[userId]);
       await c.query('UPDATE email_challenges SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',[userId]);
       await c.query('UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[userId]);
       await c.query('UPDATE devices SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[userId]);

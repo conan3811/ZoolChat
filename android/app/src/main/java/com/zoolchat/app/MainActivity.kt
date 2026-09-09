@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import com.zoolchat.app.auth.AuthRepository
 import com.zoolchat.app.auth.SessionStore
 import com.zoolchat.app.notifications.NotificationHelper
+import com.zoolchat.app.state.ZoolAppViewModel
 import com.zoolchat.app.ui.theme.ThemeMode
 import com.zoolchat.app.ui.theme.ZoolChatTheme
 
@@ -68,9 +69,7 @@ class MainActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CONTACTS && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !isFinishing) {
-            // Authenticated bootstrap calls discoverContacts(); recreate once so it runs immediately
-            // with READ_CONTACTS already granted and populates matching ZoolChat users.
-            recreate()
+            androidx.lifecycle.ViewModelProvider(this)[ZoolAppViewModel::class.java].discoverContacts()
         }
     }
 
