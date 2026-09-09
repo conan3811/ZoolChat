@@ -332,10 +332,105 @@ suspend fun prepareIdentityAfterPasswordAuth(password:String):Boolean {
         } catch(t:Throwable) { temp.delete(); throw t }
     }
 
+    private fun groupMediaKeyPref(chatId:String,clientId:String):String {
+        val digest=sha256("$chatId|$clientId".toByteArray(StandardCharsets.UTF_8)).take(16).joinToString(""){"%02x".format(it)}
+        return "group_media_${accountTag()}_$digest"
+    }
+
+    private fun cachePeerKeyFromGroup(userId:String,publicKeyB64:String,fingerprintSha256:String) {
+        if(userId==session.currentUserId)return
+        val scope=accountTag();val fpKey="peer_fp_${scope}_$userId";val old=prefs.getString(fpKey,null)
+        if(old!=null&&old!=fingerprintSha256)prefs.edit().putBoolean("peer_changed_${scope}_$userId",true).apply()
+        prefs.edit().putString("peer_key_${scope}_$userId",publicKeyB64).putString(fpKey,fingerprintSha256).apply()
+    }
+
+    private fun groupPairwiseKey(peerUserId:String,peerPublicKeyB64:String,info:String):ByteArray {
+        val me=session.currentUserId ?: error("missing_current_user")
+        val publicKey=KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(b64d(peerPublicKeyB64)))
+        return GroupE2eeProtocol.derivePairwiseKey(identity().private,publicKey,me,peerUserId,info)
+    }
+
+    suspend fun encryptGroupMessage(chatId:String,senderId:String,clientId:String,type:String,plain:String):Envelope {
+        val me=session.currentUserId ?: error("missing_current_user")
+        require(senderId==me){"group_sender_identity_mismatch"}
+        val response=api.groupE2eeKeys(chatId)
+        val missing=response.optJSONArray("missingUserIds") ?: org.json.JSONArray()
+        check(missing.length()==0){"group_member_e2ee_key_missing"}
+        val keys=response.optJSONArray("keys") ?: org.json.JSONArray()
+        check(keys.length()>0){"group_member_e2ee_key_missing"}
+        val contentKey=GroupE2eeProtocol.randomContentKey(rng)
+        val wraps=JSONObject()
+        var selfFound=false
+        for(i in 0 until keys.length()){
+            val row=keys.getJSONObject(i);val userId=row.getString("userId");val publicKey=row.getString("publicKeyB64");val fp=row.getString("fingerprintSha256")
+            if(userId==me)selfFound=true else cachePeerKeyFromGroup(userId,publicKey,fp)
+            val info="group-wrap-v2|$chatId|$senderId|$userId|$clientId|$type"
+            val pairKey=groupPairwiseKey(userId,publicKey,info)
+            wraps.put(userId,GroupE2eeProtocol.encrypt(pairKey,contentKey,info,rng))
+        }
+        check(selfFound){"group_sender_key_missing"}
+        val payloadAad="group-payload-v2|$chatId|$senderId|$clientId|$type"
+        val payload=GroupE2eeProtocol.encrypt(contentKey,plain.toByteArray(StandardCharsets.UTF_8),payloadAad,rng)
+        val outer=JSONObject().put("v",2).put("payload",payload).put("wraps",wraps)
+        return Envelope("zcg2:"+b64(outer.toString().toByteArray(StandardCharsets.UTF_8)),true,2)
+    }
+
+    suspend fun decryptGroupMessage(chatId:String,senderId:String,clientId:String,type:String,envelope:String):String {
+        require(envelope.startsWith("zcg2:")){"unsupported_group_ciphertext"}
+        val me=session.currentUserId ?: error("missing_current_user")
+        val outer=JSONObject(b64d(envelope.removePrefix("zcg2:")).toString(StandardCharsets.UTF_8))
+        require(outer.optInt("v")==2){"unsupported_group_ciphertext"}
+        val wrapped=outer.getJSONObject("wraps").optString(me)
+        check(wrapped.isNotBlank()){"group_message_not_for_member"}
+        val payload=outer.getString("payload")
+        val wrapInfo="group-wrap-v2|$chatId|$senderId|$me|$clientId|$type"
+        val payloadAad="group-payload-v2|$chatId|$senderId|$clientId|$type"
+        suspend fun attempt(force:Boolean):String {
+            val peerPublic=if(senderId==me)b64(identity().public.encoded) else peerKey(senderId,force).publicKeyB64
+            val pairKey=groupPairwiseKey(senderId,peerPublic,wrapInfo)
+            val contentKey=GroupE2eeProtocol.decrypt(pairKey,wrapped,wrapInfo)
+            return GroupE2eeProtocol.decrypt(contentKey,payload,payloadAad).toString(StandardCharsets.UTF_8)
+        }
+        return try{attempt(false)}catch(first:javax.crypto.AEADBadTagException){if(senderId==me)throw first;attempt(true)}
+    }
+
+    fun newGroupMediaKey():String=GroupE2eeProtocol.encode(GroupE2eeProtocol.randomContentKey(rng))
+
+    fun cacheGroupMediaKey(chatId:String,clientId:String,keyB64:String) {
+        val key=GroupE2eeProtocol.decode(keyB64);require(key.size==32){"bad_group_media_key"}
+        prefs.edit().putString(groupMediaKeyPref(chatId,clientId),encryptPrivate(key)).apply()
+    }
+
+    private fun groupMediaKey(chatId:String,clientId:String):ByteArray {
+        val encoded=prefs.getString(groupMediaKeyPref(chatId,clientId),null) ?: error("group_media_key_missing")
+        return decryptPrivate(encoded).also{require(it.size==32){"bad_group_media_key"}}
+    }
+
+    fun encryptGroupMediaFile(chatId:String,clientId:String,type:String,input:File,output:File,keyB64:String) {
+        cacheGroupMediaKey(chatId,clientId,keyB64);val key=groupMediaKey(chatId,clientId)
+        val iv=ByteArray(12).also(rng::nextBytes);val aad="$chatId|$clientId|$type|group-media-v2".toByteArray(StandardCharsets.UTF_8)
+        val c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,SecretKeySpec(key,"AES"),GCMParameterSpec(128,iv));c.updateAAD(aad)
+        FileOutputStream(output).use{raw->raw.write(byteArrayOf('Z'.code.toByte(),'C'.code.toByte(),'F'.code.toByte(),2));raw.write(iv);CipherOutputStream(raw,c).use{enc->FileInputStream(input).use{it.copyTo(enc)}}}
+    }
+
+    fun decryptGroupMediaFile(chatId:String,clientId:String,type:String,input:File,output:File) {
+        output.parentFile?.mkdirs();val temp=File(output.parentFile ?: output.absoluteFile.parentFile,".${output.name}.${System.nanoTime()}.tmp")
+        try{
+            FileInputStream(input).use{raw->
+                val magic=ByteArray(4);require(raw.read(magic)==4&&magic[0]=='Z'.code.toByte()&&magic[1]=='C'.code.toByte()&&magic[2]=='F'.code.toByte()&&magic[3].toInt()==2){"unsupported_group_media_ciphertext"}
+                val iv=ByteArray(12);require(raw.read(iv)==12){"bad_group_media_ciphertext"};val key=groupMediaKey(chatId,clientId)
+                val aad="$chatId|$clientId|$type|group-media-v2".toByteArray(StandardCharsets.UTF_8);val c=Cipher.getInstance("AES/GCM/NoPadding")
+                c.init(Cipher.DECRYPT_MODE,SecretKeySpec(key,"AES"),GCMParameterSpec(128,iv));c.updateAAD(aad)
+                FileOutputStream(temp).use{out->CipherInputStream(raw,c).use{it.copyTo(out)};out.fd.sync()}
+            }
+            if(output.exists())output.delete();check(temp.renameTo(output)){"media_cache_commit_failed"}
+        }catch(t:Throwable){temp.delete();throw t}
+    }
+
     fun clearLocalAccountKeys() {
         val scope=accountTag()
         val editor=prefs.edit().remove(pubKeyPref()).remove(privKeyPref()).remove(recoveryBlockedPref())
-        prefs.all.keys.filter { it.startsWith("peer_key_${scope}_") || it.startsWith("peer_fp_${scope}_") || it.startsWith("peer_changed_${scope}_") }.forEach(editor::remove)
+        prefs.all.keys.filter { it.startsWith("peer_key_${scope}_") || it.startsWith("peer_fp_${scope}_") || it.startsWith("peer_changed_${scope}_") || it.startsWith("group_media_${scope}_") }.forEach(editor::remove)
         editor.apply()
         runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(vaultAlias()) }
     }

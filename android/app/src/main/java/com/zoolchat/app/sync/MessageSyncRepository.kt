@@ -43,15 +43,18 @@ class MessageSyncRepository(
     private val localCrypto: LocalStorageCrypto = LocalStorageCrypto(context),
 ) {
     private suspend fun decode(message: RemoteMessage): RemoteMessage {
-        if ((!message.encrypted && !message.body.startsWith("zce1:")) || message.deleted) return message
+        val directCipher=message.body.startsWith("zce1:")
+        val groupCipher=message.body.startsWith("zcg2:") || message.cryptoVersion==2
+        if ((!message.encrypted && !directCipher && !groupCipher) || message.deleted) return message
         val chat = db.chats().byId(message.chatId) ?: return message.copy(body = "🔒 رسالة مشفرة", decryptionFailed = true)
-        val peer = chat.peerUserId ?: return message.copy(body = "🔒 تعذر فك تشفير هذه الرسالة", decryptionFailed = true)
         val clientId = message.clientId ?: return message.copy(body = "🔒 تعذر فك التشفير", decryptionFailed = true)
         return runCatching {
-            val plain = crypto.decryptMessage(message.chatId, peer, message.senderId, clientId, message.type, message.body)
+            val plain = if(groupCipher) crypto.decryptGroupMessage(message.chatId,message.senderId,clientId,message.type,message.body)
+                else crypto.decryptMessage(message.chatId,chat.peerUserId ?: error("peer_identity_missing"),message.senderId,clientId,message.type,message.body)
             if (message.type == "text") message.copy(body = plain, decryptionFailed = false)
             else {
                 val meta = JSONObject(plain)
+                if(groupCipher)meta.optString("mediaKeyB64").takeIf{it.isNotBlank()}?.let{crypto.cacheGroupMediaKey(message.chatId,clientId,it)}
                 val name = meta.optString("name").ifBlank { "مرفق" }
                 message.copy(
                     body = name,
@@ -61,7 +64,10 @@ class MessageSyncRepository(
                     decryptionFailed = false,
                 )
             }
-        }.getOrElse { message.copy(body = "🔒 تعذر فك تشفير هذه الرسالة", decryptionFailed = true) }
+        }.getOrElse { failure ->
+            val text=if(groupCipher && failure.message=="group_message_not_for_member") "🔒 هذه الرسالة سبقت انضمامك أو تفعيل التشفير لديك" else "🔒 تعذر فك تشفير هذه الرسالة"
+            message.copy(body=text,decryptionFailed=true)
+        }
     }
 
     private suspend fun decodeAll(items: List<RemoteMessage>): List<RemoteMessage> = items.map { decode(it) }
@@ -75,7 +81,7 @@ class MessageSyncRepository(
     private fun previewFor(message: RemoteMessage, myUserId: String? = SessionStore(context).currentUserId): String = when {
         message.deleted -> "تم حذف هذه الرسالة"
         message.type == "call" -> callPreview(message, myUserId)
-        message.type == "text" -> if (message.decryptionFailed || message.body.startsWith("zce1:")) "رسالة" else message.body
+        message.type == "text" -> if (message.decryptionFailed || message.body.startsWith("zce1:") || message.body.startsWith("zcg2:")) "رسالة" else message.body
         message.type == "image" -> "📷 صورة"
         message.type == "video" -> "🎥 فيديو"
         message.type == "audio" -> "🎤 رسالة صوتية"
@@ -122,7 +128,7 @@ class MessageSyncRepository(
         val myUserId = SessionStore(context).currentUserId
         val items = baseItems.map { remote ->
             val preview = remote.lastMessage.orEmpty()
-            val needsClientPreview = preview.isBlank() || preview == "🔒 رسالة مشفرة" || preview == "📞 مكالمة" || preview.startsWith("zce1:") || preview.contains("callId\"")
+            val needsClientPreview = preview.isBlank() || preview == "🔒 رسالة مشفرة" || preview == "📞 مكالمة" || preview.startsWith("zce1:") || preview.startsWith("zcg2:") || preview.contains("callId\"")
             if (!needsClientPreview) return@map remote
 
             val latest = runCatching { api.messages(remote.id, limit = 1) }.getOrNull()
@@ -244,9 +250,8 @@ class MessageSyncRepository(
             val envelope = crypto.encryptMessage(chatId, peer, local.senderId, clientId, "text", newBody)
             parseMessage(api.editMessage(chatId, messageId, envelope.body, envelope.encrypted, envelope.cryptoVersion))
         } else {
-            // E2EE beta currently applies to direct chats. Group edits must use the authenticated
-            // group transport instead of failing because there is no single peer identity.
-            parseMessage(api.editMessage(chatId, messageId, newBody, encrypted = false, cryptoVersion = 0))
+            val envelope=crypto.encryptGroupMessage(chatId,local.senderId,clientId,"text",newBody)
+            parseMessage(api.editMessage(chatId,messageId,envelope.body,envelope.encrypted,envelope.cryptoVersion))
         }
         val decoded = decode(remote)
         val merged = if (decoded.reactions.isEmpty()) decoded.copy(reactions = local.toRemote(localCrypto).reactions) else decoded
@@ -315,7 +320,7 @@ class MessageSyncRepository(
             jsonStringOrNull(o, "type") ?: "direct",
             jsonStringOrNull(o, "title") ?: "محادثة",
             jsonStringOrNull(o, "peerUserId"),
-            jsonStringOrNull(o, "lastMessage")?.takeUnless { it.startsWith("zce1:") || it == "🔒 رسالة مشفرة" },
+            jsonStringOrNull(o, "lastMessage")?.takeUnless { it.startsWith("zce1:") || it.startsWith("zcg2:") || it == "🔒 رسالة مشفرة" },
             jsonStringOrNull(o, "lastMessageAt"),
             o.optInt("unread", 0),
         )
@@ -335,8 +340,8 @@ class MessageSyncRepository(
             mediaMime = o.optJSONObject("media")?.let { jsonStringOrNull(it, "mime") },
             mediaName = o.optJSONObject("media")?.let { jsonStringOrNull(it, "name") },
             mediaSize = o.optJSONObject("media")?.optLong("size")?.takeIf { it > 0 },
-            encrypted = o.optBoolean("encrypted", false) || o.optString("body").startsWith("zce1:"),
-            cryptoVersion = o.optInt("cryptoVersion", if (o.optString("body").startsWith("zce1:")) 1 else 0),
+            encrypted = o.optBoolean("encrypted", false) || o.optString("body").startsWith("zce1:") || o.optString("body").startsWith("zcg2:"),
+            cryptoVersion = o.optInt("cryptoVersion", if (o.optString("body").startsWith("zcg2:")) 2 else if (o.optString("body").startsWith("zce1:")) 1 else 0),
             reactions = parseReactions(o),
         )
     }
@@ -382,17 +387,19 @@ class PendingMessageWorker(appContext: Context, params: WorkerParameters) : Coro
                                 .put("mediaEncrypted", true)
                                 .toString()
                         } else {
-                            // Group E2EE is not part of the current direct-chat E2EE beta. Keep the
-                            // local pending file encrypted at rest, reveal only a short-lived temp
-                            // file for the authenticated member-only upload, and do not attempt a
-                            // bogus one-peer ECDH derivation for the group.
-                            val media = api.uploadMedia(
-                                Uri.fromFile(sourceFile),
-                                item.mediaMime ?: "application/octet-stream",
-                                pendingMediaName ?: pendingBody.ifBlank { "attachment" },
-                            )
-                            mediaId = media.getString("id")
-                            transportBody = pendingBody
+                            val mediaKey=crypto.newGroupMediaKey()
+                            transportTemp=File.createTempFile("zool_group_media_", ".zcg", applicationContext.cacheDir)
+                            crypto.encryptGroupMediaFile(item.chatId,item.clientId,item.type,sourceFile,transportTemp!!,mediaKey)
+                            val media=api.uploadMedia(Uri.fromFile(transportTemp),"application/octet-stream","zool-group-media.zcg")
+                            mediaId=media.getString("id")
+                            transportBody=JSONObject()
+                                .put("name",pendingMediaName ?: pendingBody.ifBlank { "مرفق" })
+                                .put("mime",item.mediaMime ?: "application/octet-stream")
+                                .put("size",sourceFile.length())
+                                .put("mediaEncrypted",true)
+                                .put("mediaCryptoVersion",2)
+                                .put("mediaKeyB64",mediaKey)
+                                .toString()
                         }
                     } finally {
                         sourceFile.delete()
@@ -405,8 +412,9 @@ class PendingMessageWorker(appContext: Context, params: WorkerParameters) : Coro
                         api.sendMessage(item.chatId, item.clientId, item.type, envelope.body, mediaId, envelope.encrypted, envelope.cryptoVersion),
                     )
                 } else {
+                    val envelope=crypto.encryptGroupMessage(item.chatId,item.senderId,item.clientId,item.type,transportBody)
                     MessageSyncRepository.parseMessage(
-                        api.sendMessage(item.chatId, item.clientId, item.type, transportBody, mediaId, encrypted = false, cryptoVersion = 0),
+                        api.sendMessage(item.chatId,item.clientId,item.type,envelope.body,mediaId,envelope.encrypted,envelope.cryptoVersion),
                     )
                 }
 
@@ -424,8 +432,8 @@ class PendingMessageWorker(appContext: Context, params: WorkerParameters) : Coro
                         body = pendingBody,
                         mediaName = pendingMediaName ?: remoteRaw.mediaName,
                         mediaMime = item.mediaMime ?: remoteRaw.mediaMime,
-                        encrypted = false,
-                        cryptoVersion = 0,
+                        encrypted = true,
+                        cryptoVersion = 2,
                         decryptionFailed = false,
                     )
                 }

@@ -22,14 +22,14 @@ class MediaRepository(
         val url = requireNotNull(message.mediaUrl) { "media_url_missing" }
         val raw = api.downloadMedia(url, if(message.encrypted) "blob.zce" else (message.mediaName ?: "attachment"))
         if(!message.encrypted) return raw
-        val peer = peerUserId ?: error("peer_identity_missing")
         val clientId = message.clientId ?: error("message_client_id_missing")
         val safe=(message.mediaName ?: "attachment").replace(Regex("[^A-Za-z0-9._-]"),"_").takeLast(90).ifBlank{"attachment"}
         val cacheDir=File(context.cacheDir,"zool_media").apply{mkdirs()}
         val out=File(cacheDir,"zool_media_dec_${message.id.hashCode().toUInt()}_$safe")
         if(out.exists()&&out.length()>0){ raw.delete(); return out }
         try {
-            e2ee.decryptMediaFile(message.chatId,peer,clientId,message.type,raw,out)
+            if(message.cryptoVersion==2)e2ee.decryptGroupMediaFile(message.chatId,clientId,message.type,raw,out)
+            else e2ee.decryptMediaFile(message.chatId,peerUserId ?: error("peer_identity_missing"),clientId,message.type,raw,out)
             return out
         } finally { raw.delete() }
     }

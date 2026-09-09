@@ -261,6 +261,9 @@ fun ProductionChatScreen(
         )
     }
 
+    if(showSecurity && isGroup){
+        AlertDialog(onDismissRequest={showSecurity=false},title={Text(t("التشفير في المجموعة"))},text={Text(t("رسائل ومرفقات المجموعة الجديدة تستخدم Group E2EE v2. يتم تشفير محتوى كل رسالة بمفتاح عشوائي ثم يُشفّر المفتاح لكل عضو حالي باستخدام مفتاح هويته. إذا كان أحد الأعضاء بلا مفتاح تشفير فلن يتم إرسال الرسالة كنص مكشوف."))},confirmButton={TextButton(onClick={showSecurity=false}){Text(t("تم"))}})
+    }
     if(showSecurity && !isGroup){
         LaunchedEffect(showSecurity,peerUserId){ if(peerUserId!=null) peerFingerprint=runCatching{e2ee.peerFingerprint(peerUserId)}.getOrNull() }
         AlertDialog(onDismissRequest={showSecurity=false},title={Text(t("التشفير ورمز الأمان"))},text={Column{Text(t("هذه المحادثة تستخدم E2EE beta مباشر بين الجهازين."));Spacer(Modifier.height(10.dp));Text(t("بصمة جهازك:"),fontWeight=FontWeight.Bold);Text(e2ee.localFingerprint(),style=MaterialTheme.typography.bodySmall);Spacer(Modifier.height(10.dp));Text(t("بصمة الطرف الآخر:"),fontWeight=FontWeight.Bold);Text(peerFingerprint?:t("جاري التحميل…"),style=MaterialTheme.typography.bodySmall);if(peerUserId!=null&&e2ee.peerKeyChanged(peerUserId)){Spacer(Modifier.height(10.dp));Text(t("⚠ تغيّر مفتاح الطرف الآخر. تحقق من البصمة قبل متابعة المحادثة الحساسة."),color=MaterialTheme.colorScheme.error)}}},confirmButton={TextButton(onClick={peerUserId?.let{e2ee.acknowledgePeerKey(it)};showSecurity=false}){Text(t("تم"))}})
@@ -303,6 +306,7 @@ fun ProductionChatScreen(
                         showMuteDialog=true
                     }
                     if (isGroup) {
+                        ChatMenuItem(Icons.Rounded.VerifiedUser,t("التشفير في المجموعة")) { showMore=false; showSecurity=true }
                         ChatMenuItem(Icons.Rounded.Timer,t("الرسائل المختفية")) { showMore=false; onOpenGroupInfo() }
                         HorizontalDivider(color=MaterialTheme.colorScheme.onSurface.copy(alpha=.15f))
                         ChatMenuItem(Icons.Rounded.Report,t("إبلاغ")) { showMore=false; onOpenGroupInfo() }
