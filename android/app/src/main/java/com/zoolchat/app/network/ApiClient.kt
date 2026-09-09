@@ -172,6 +172,7 @@ class ApiClient(
     )
 
     suspend fun getE2eeKey(userId: String): JSONObject = get("/api/users/$userId/e2ee-key")
+    suspend fun groupE2eeKeys(chatId: String): JSONObject = get("/api/groups/$chatId/e2ee-keys")
 
     suspend fun uploadMedia(uri: Uri, mime: String, displayName: String): JSONObject = withContext(Dispatchers.IO) {
         require(!baseUrl.contains("YOUR_BACKEND_HOST")) { "service_unavailable" }
@@ -252,21 +253,21 @@ class ApiClient(
     suspend fun getPrivacy(): JSONObject = get("/api/privacy").getJSONObject("privacy")
     suspend fun updatePrivacy(
         readReceipts: Boolean? = null,
-        showLastSeen: Boolean? = null,
-        showOnline: Boolean? = null,
-        profilePhotoVisibility: String? = null,
-        aboutVisibility: String? = null,
-    ): JSONObject = put(
-        "/api/privacy",
-        JSONObject().apply {
-            readReceipts?.let { put("readReceipts", it) }
-            showLastSeen?.let { put("showLastSeen", it) }
-            showOnline?.let { put("showOnline", it) }
-            profilePhotoVisibility?.let { put("profilePhotoVisibility", it) }
-            aboutVisibility?.let { put("aboutVisibility", it) }
-        },
-    ).getJSONObject("privacy")
-
-    suspend fun exportAccount(): JSONObject = get("/api/account/export")
-    suspend fun deleteAccount() = delete("/api/account")
+        lastSeen: String? = null,
+        online: String? = null,
+        profilePhoto: String? = null,
+        status: String? = null,
+        addToGroups: String? = null,
+        callPrivacy: String? = null,
+        messagePreviews: Boolean? = null,
+    ): JSONObject = put("/api/privacy", JSONObject().apply {
+        readReceipts?.let { put("readReceipts", it) }
+        lastSeen?.let { put("lastSeen", it) }
+        online?.let { put("online", it) }
+        profilePhoto?.let { put("profilePhoto", it) }
+        status?.let { put("status", it) }
+        addToGroups?.let { put("addToGroups", it) }
+        callPrivacy?.let { put("callPrivacy", it) }
+        messagePreviews?.let { put("messagePreviews", it) }
+    }).getJSONObject("privacy")
 }
