@@ -1,0 +1,21 @@
+name: Probe ZoolChat v0.32 live stage two
+on:
+  push:
+    branches: [zoolchat-v0.32-development]
+    paths:
+      - 'scripts/probe_stage2_live.trigger'
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe live stage-two readiness without exposing host
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(tr -d '\r\n' < cloud/API_BASE_URL.txt)"
+          HEALTH="$(curl --fail --silent --max-time 15 "$API_URL/health")"
+          CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$API_URL/api/me/2fa" || true)"
+          HEALTH_JSON="$HEALTH" TWO_FACTOR_CODE="$CODE" node -e "const h=JSON.parse(process.env.HEALTH_JSON||'{}'); console.log(JSON.stringify({version:String(h.version||'unknown'),ok:h.ok===true,db:h.db===true,livekitConfigured:h.livekitConfigured===true,firebaseConfigured:h.firebaseConfigured===true,emailConfigured:h.emailConfigured===true,twoFactorUnauthenticatedHttp:Number(process.env.TWO_FACTOR_CODE||0)}))"
