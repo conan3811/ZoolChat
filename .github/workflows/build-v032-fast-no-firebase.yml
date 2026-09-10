@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -23,12 +24,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
+          cache-disabled: true
       - name: Assemble v0.32 public debug APK
         working-directory: android
         run: gradle :app:assemblePublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
+      - name: Remove older copies of this APK artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner, repo, name: 'ZoolChat-v032-latest-no-firebase', per_page: 100 }
+            );
+            for (const artifact of artifacts) {
+              await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: artifact.id });
+            }
       - uses: actions/upload-artifact@v4
         with:
           name: ZoolChat-v032-latest-no-firebase
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
-# Rebuild after profile setup compatibility, username identity sync, and Compose import fix.
+          retention-days: 3
+# Storage-safe: only the newest no-Firebase APK is retained; Gradle cache is disabled.
