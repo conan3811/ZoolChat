@@ -9,6 +9,7 @@ on:
       - '.github/workflows/build-v032-firebase.yml'
 permissions:
   contents: read
+  actions: write
 jobs:
   firebase-apk:
     runs-on: ubuntu-latest
@@ -46,16 +47,30 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
+          cache-disabled: true
       - name: Build and lint Firebase-enabled public APK
         working-directory: android
         run: gradle :app:assemblePublicDebug :app:lintPublicDebug -PZOOLCHAT_API_BASE_URL="$(tr -d '\r\n' < ../cloud/API_BASE_URL.txt)" --stacktrace
       - name: Remove source Firebase configuration before artifact upload
         if: always()
         run: rm -f android/app/google-services.json
+      - name: Remove older copies of this Firebase APK artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner, repo, name: 'ZoolChat-v0.32-Firebase-publicDebug', per_page: 100 }
+            );
+            for (const artifact of artifacts) {
+              await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: artifact.id });
+            }
       - uses: actions/upload-artifact@v4
         with:
           name: ZoolChat-v0.32-Firebase-publicDebug
           path: android/app/build/outputs/apk/public/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
 
-# Triggered after call startup and searchable-user-profile repair.
+# Storage-safe: only the newest Firebase APK is retained; Gradle cache is disabled.
