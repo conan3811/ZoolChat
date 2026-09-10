@@ -16,11 +16,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Keep newest artifact per name and clear caches
+      - name: Keep only essential ZoolChat artifacts and clear caches
         uses: actions/github-script@v7
         with:
           script: |
             const { owner, repo } = context.repo;
+
+            // These are the only artifact names we currently need for ZoolChat v0.32.
+            // For each name, only the newest copy is preserved.
+            const protectedNames = new Set([
+              'ZoolChat-v0.32-Firebase-publicDebug',
+              'ZoolChat-v032-latest-no-firebase',
+              'ZoolChat-v032-validation-only-no-firebase',
+              'android-apk-signing-tools',
+              'zoolchat-v032-android-source',
+              'ZoolChat-v032-current-build-source'
+            ]);
 
             const artifacts = await github.paginate(
               github.rest.actions.listArtifactsForRepo,
@@ -33,24 +44,24 @@ jobs:
               groups.get(artifact.name).push(artifact);
             }
 
-            const deleteArtifacts = [];
-            let keptBytes = 0;
-            let deleteBytes = 0;
-
-            for (const [name, items] of groups) {
+            const keepIds = new Set();
+            for (const name of protectedNames) {
+              const items = groups.get(name) || [];
               items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-              const newest = items[0];
-              keptBytes += newest?.size_in_bytes || 0;
-              core.info(`KEEP artifact: ${name} | id=${newest.id} | ${(newest.size_in_bytes / 1024 / 1024).toFixed(1)} MB | ${newest.created_at}`);
+              if (items[0]) keepIds.add(items[0].id);
+            }
 
-              for (const artifact of items.slice(1)) {
-                deleteArtifacts.push(artifact);
-                deleteBytes += artifact.size_in_bytes || 0;
-              }
+            const deleteArtifacts = artifacts.filter(a => !keepIds.has(a.id));
+            const keptArtifacts = artifacts.filter(a => keepIds.has(a.id));
+            const deleteBytes = deleteArtifacts.reduce((n, a) => n + (a.size_in_bytes || 0), 0);
+            const keptBytes = keptArtifacts.reduce((n, a) => n + (a.size_in_bytes || 0), 0);
+
+            for (const artifact of keptArtifacts) {
+              core.info(`KEEP artifact: ${artifact.name} | id=${artifact.id} | ${(artifact.size_in_bytes / 1024 / 1024).toFixed(1)} MB | ${artifact.created_at}`);
             }
 
             core.info(`Artifacts found: ${artifacts.length}`);
-            core.info(`Duplicate artifacts to delete: ${deleteArtifacts.length}`);
+            core.info(`Artifacts to delete: ${deleteArtifacts.length}`);
             core.info(`Estimated artifact space to free: ${(deleteBytes / 1024 / 1024).toFixed(1)} MB`);
 
             for (const artifact of deleteArtifacts) {
@@ -71,8 +82,7 @@ jobs:
               if (pageCaches.length < 100) break;
             }
 
-            let cacheBytes = 0;
-            for (const cache of caches) cacheBytes += cache.size_in_bytes || 0;
+            const cacheBytes = caches.reduce((n, c) => n + (c.size_in_bytes || 0), 0);
             core.info(`Caches to delete: ${caches.length}`);
             core.info(`Estimated cache space to free: ${(cacheBytes / 1024 / 1024).toFixed(1)} MB`);
 
@@ -90,8 +100,8 @@ jobs:
               .addTable([
                 [{data: 'Item', header: true}, {data: 'Count', header: true}, {data: 'Estimated MB', header: true}],
                 ['Artifacts deleted', String(deleteArtifacts.length), (deleteBytes / 1024 / 1024).toFixed(1)],
-                ['Artifact names retained', String(groups.size), (keptBytes / 1024 / 1024).toFixed(1)],
+                ['Essential artifacts retained', String(keptArtifacts.length), (keptBytes / 1024 / 1024).toFixed(1)],
                 ['Caches deleted', String(caches.length), (cacheBytes / 1024 / 1024).toFixed(1)]
               ])
-              .addRaw('\nNewest artifact for every artifact name was preserved. Source code, commits, branches, secrets, and releases were not changed.')
+              .addRaw('\nOnly the newest essential ZoolChat v0.32 artifacts were preserved. Source code, commits, branches, releases, repository files, and secrets were not changed.')
               .write();
