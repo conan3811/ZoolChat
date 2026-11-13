@@ -6,8 +6,8 @@ android {
         applicationId = "com.streamimdb.tv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
         ndk { abiFilters.add("armeabi-v7a") }
     }
     buildTypes { release { isMinifyEnabled = false } }

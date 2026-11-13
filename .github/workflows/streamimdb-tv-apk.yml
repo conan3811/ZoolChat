@@ -6,6 +6,7 @@ on:
       - build-streamimdb-armv7-20261113
     paths-ignore:
       - StreamIMDB-TV-armeabi-v7a.apk
+      - streamimdb-android-tv/app/src/main/res/raw/khyam_intro.mp4
   workflow_dispatch:
 
 permissions:
@@ -32,6 +33,18 @@ jobs:
           SDKMANAGER=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | head -1)
           test -n "$SDKMANAGER"
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Bundle silent Khyam TV intro
+        env:
+          VIDEO_URL: "https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-9004-820a-89a7-8eade0d72821/raw?se=2026-11-13T09%3A39%3A32Z&sp=r&sv=2026-06-06&sr=b&scid=640296c6-f265-5d29-9193-5200f6049ed3&skoid=5c9dda00-298b-4376-81e9-b4568c8a3c0f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-11-12T23%3A14%3A13Z&ske=2026-11-13T23%3A14%3A13Z&sks=b&skv=2026-06-06&sig=ZPhIq8jy1H3UjBgggbEIPwOaPNxxpPFf7kFv6AMgc0s%3D"
+        run: |
+          set -euo pipefail
+          ASSET="streamimdb-android-tv/app/src/main/res/raw/khyam_intro.mp4"
+          mkdir -p "$(dirname "$ASSET")"
+          if [ ! -s "$ASSET" ]; then
+            curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 12 "$VIDEO_URL" --output "$ASSET"
+          fi
+          test "$(stat -c%s "$ASSET")" -gt 300000
 
       - name: Install Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -61,7 +74,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f StreamIMDB-TV-armeabi-v7a.apk
+          git add -f StreamIMDB-TV-armeabi-v7a.apk streamimdb-android-tv/app/src/main/res/raw/khyam_intro.mp4
           if ! git diff --cached --quiet; then
             git commit -m "Build StreamIMDB TV ARMv7-compatible debug APK"
             git push origin HEAD:build-streamimdb-armv7-20261113

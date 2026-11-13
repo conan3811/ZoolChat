@@ -33,6 +33,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.VideoView;
 
 public class MainActivity extends Activity {
   private static final String HOME = "https://streamimdb.ru/";
@@ -49,6 +50,50 @@ public class MainActivity extends Activity {
   private boolean menuHeld = false;
   private Button pointerToggle;
   private final Handler handler = new Handler(Looper.getMainLooper());
+
+  private FrameLayout openingLayer;
+  private VideoView openingPlayer;
+
+  /** Local, two-second silent Khyam TV startup logo. */
+  private void playOpeningLogo() {
+    if (openingLayer != null) return;
+    final FrameLayout layer = new FrameLayout(this);
+    layer.setBackgroundColor(Color.BLACK);
+    final VideoView player = new VideoView(this);
+    layer.addView(player, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+    root.addView(layer, new FrameLayout.LayoutParams(-1, -1));
+    openingLayer = layer;
+    openingPlayer = player;
+
+    player.setOnPreparedListener(media -> {
+      media.setVolume(0f, 0f); // Silence even if source ever contains an audio track.
+      media.setLooping(false);
+      player.start();
+    });
+    player.setOnCompletionListener(media -> dismissOpeningLogo());
+    player.setOnErrorListener((media, what, extra) -> {
+      dismissOpeningLogo(); // Never block the main app on decoder errors.
+      return true;
+    });
+    player.setVideoURI(Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.khyam_intro));
+    handler.postDelayed(this::dismissOpeningLogo, 4500); // Decoder/device fallback.
+  }
+
+  private void dismissOpeningLogo() {
+    if (openingLayer == null) return;
+    FrameLayout oldLayer = openingLayer;
+    VideoView oldPlayer = openingPlayer;
+    openingLayer = null;
+    openingPlayer = null;
+    if (oldPlayer != null) {
+      oldPlayer.setOnCompletionListener(null);
+      oldPlayer.setOnErrorListener(null);
+      oldPlayer.stopPlayback();
+    }
+    root.removeView(oldLayer);
+    if (web != null) web.requestFocus();
+  }
+
 
   @SuppressLint("SetJavaScriptEnabled")
   @Override public void onCreate(Bundle savedInstanceState) {
@@ -129,6 +174,7 @@ public class MainActivity extends Activity {
     root.addView(instruction, new FrameLayout.LayoutParams(-1, dp(44), Gravity.BOTTOM));
     handler.postDelayed(() -> instruction.setVisibility(View.GONE), 9000);
     web.loadUrl(HOME);
+    playOpeningLogo();
     web.requestFocus();
     cursor.setVisibility(pointerMode ? View.VISIBLE : View.GONE);
   }
@@ -270,6 +316,7 @@ public class MainActivity extends Activity {
   }
 
   @Override public void onBackPressed() {
+    if (openingLayer != null) { dismissOpeningLogo(); return; }
     if (videoView != null) { exitVideo(); return; }
     if (menuOpen) { toggleMenu(false); return; }
     if (web.canGoBack()) { web.goBack(); return; }
@@ -279,6 +326,7 @@ public class MainActivity extends Activity {
   @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); setImmersive(); }
   @Override protected void onDestroy() {
     handler.removeCallbacksAndMessages(null);
+    dismissOpeningLogo();
     if (videoView != null) exitVideo();
     root.removeView(web);
     web.stopLoading();
