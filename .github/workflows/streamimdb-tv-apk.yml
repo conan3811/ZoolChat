@@ -1,0 +1,68 @@
+name: Build StreamIMDB TV armeabi-v7a APK
+
+on:
+  push:
+    branches:
+      - build-streamimdb-armv7-20261113
+    paths-ignore:
+      - StreamIMDB-TV-armeabi-v7a.apk
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android-tv-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout private build branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Install Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build signed debug APK
+        run: gradle --no-daemon -p streamimdb-android-tv :app:assembleDebug --stacktrace
+
+      - name: Verify installable APK
+        run: |
+          set -e
+          cp streamimdb-android-tv/app/build/outputs/apk/debug/app-debug.apk StreamIMDB-TV-armeabi-v7a.apk
+          test -s StreamIMDB-TV-armeabi-v7a.apk
+          unzip -t StreamIMDB-TV-armeabi-v7a.apk | tail -1
+          sha256sum StreamIMDB-TV-armeabi-v7a.apk
+          ls -lh StreamIMDB-TV-armeabi-v7a.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamIMDB-TV-armeabi-v7a
+          path: StreamIMDB-TV-armeabi-v7a.apk
+          if-no-files-found: error
+
+      - name: Save APK on the isolated build branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f StreamIMDB-TV-armeabi-v7a.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "Build StreamIMDB TV ARMv7-compatible debug APK"
+            git push origin HEAD:build-streamimdb-armv7-20261113
+          fi
